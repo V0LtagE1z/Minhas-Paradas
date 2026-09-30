@@ -5,7 +5,8 @@
 #
 # Distros de desktop: rode como root (ou com sudo). O script
 #   1. instala os pacotes do sistema;
-#   2. cria o usuário "gustavo" (home /home/gustavo, shell zsh, grupos wheel/audio/video);
+#   2. cria o usuário "gustavo" (home /home/gustavo, shell zsh, grupos wheel/audio/video)
+#      e troca o shell do root para zsh;
 #   3. dá sudo a ele e pede a senha dele;
 #   4. executa o setup tradicional (paru, oh-my-zsh, p10k, dotfiles, Kitty, fontes) COMO esse usuário.
 # Termux e Arch Linux ARM em proot: não criam usuário; rodam o setup tradicional direto
@@ -85,6 +86,21 @@ append_line() {  # linha arquivo — acrescenta ao final, com sudo se preciso
   else
     printf '%s\n' "$line" | $SUDO tee -a "$file" >/dev/null
   fi
+}
+
+# Caminho do zsh para usar como shell de login. O "command -v" pode devolver
+# /usr/sbin/zsh (symlink para /usr/bin no Arch), que não está em /etc/shells e o
+# chsh recusa. Prefere o caminho real e, se nenhum estiver listado, devolve o real.
+zsh_shell_path() {
+  local found real p
+  found=$(command -v zsh) || return 1
+  real=$(readlink -f -- "$found" 2>/dev/null || echo "$found")
+  for p in "$real" "$found" /usr/bin/zsh /bin/zsh; do
+    if [[ -x $p ]] && grep -qxF "$p" /etc/shells 2>/dev/null; then
+      printf '%s\n' "$p"; return 0
+    fi
+  done
+  printf '%s\n' "$real"
 }
 
 PM=""
@@ -345,7 +361,7 @@ ensure_sudo() {
 
 create_user() {
   local zsh_bin g groups=() csv
-  if ! zsh_bin=$(command -v zsh); then
+  if ! zsh_bin=$(zsh_shell_path); then
     if ((DRY_RUN)); then zsh_bin=/usr/bin/zsh
     else die "zsh não foi instalado; não dá para defini-lo como shell de $NEW_USER."
     fi
@@ -379,6 +395,21 @@ create_user() {
     run useradd -m -d "$NEW_HOME" -s "$zsh_bin" -G "$csv" "$NEW_USER"
     log "usuário criado: $NEW_USER (home $NEW_HOME, shell $zsh_bin, grupos $csv)"
   fi
+}
+
+set_root_shell() {
+  # O root também passa a usar zsh (o $NEW_USER já recebe o zsh em create_user).
+  local zsh_bin cur
+  if ! zsh_bin=$(zsh_shell_path); then
+    if ((DRY_RUN)); then zsh_bin=/usr/bin/zsh
+    else warn "zsh não encontrado; shell do root não alterado"; return 0
+    fi
+  fi
+  grep -qxF "$zsh_bin" /etc/shells 2>/dev/null || append_line "$zsh_bin" /etc/shells
+  cur=$(getent passwd root | cut -d: -f7)
+  if [[ $cur == "$zsh_bin" ]]; then log "shell do root já é $zsh_bin"; return 0; fi
+  run usermod -s "$zsh_bin" root
+  log "shell do root: $zsh_bin"
 }
 
 configure_sudo() {
@@ -453,6 +484,7 @@ system_phase() {
   install_desktop_packages
   ensure_sudo
   create_user
+  set_root_shell
   configure_sudo
   set_password
   run_user_phase
@@ -573,8 +605,12 @@ set_default_shell() {
   # Distros de desktop: o root já definiu o shell do novo usuário com usermod.
   is_desktop && return 0
   local zsh_bin
-  zsh_bin=$(command -v zsh) || { warn "zsh não encontrado, pulando chsh"; return 0; }
+  zsh_bin=$(zsh_shell_path) || { warn "zsh não encontrado, pulando chsh"; return 0; }
   if [[ ${SHELL:-} == "$zsh_bin" ]]; then return 0; fi
+  if [[ $PM != pkg ]]; then
+    # O chsh só aceita shells listados em /etc/shells.
+    grep -qxF "$zsh_bin" /etc/shells 2>/dev/null || append_line "$zsh_bin" /etc/shells
+  fi
   if [[ $PM == pkg ]]; then
     run chsh -s zsh || warn "falhou; rode: chsh -s zsh"
   else
