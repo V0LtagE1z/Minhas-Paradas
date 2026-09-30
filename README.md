@@ -8,7 +8,7 @@ Meus dotfiles de terminal em um script que monta tudo em uma máquina nova, seja
 
 | Caminho | Para que serve |
 | ------- | -------------- |
-| `setup.sh` | Instala pacotes, oh-my-zsh, powerlevel10k, plugins, Kitty e fontes, e aplica os dotfiles |
+| `setup.sh` | Cria o usuário `gustavo` (só em distros), instala pacotes, oh-my-zsh, powerlevel10k, plugins, Kitty e fontes, e aplica os dotfiles |
 | `Distro Normal/` | Dotfiles para distros Linux de desktop |
 | `Termux/` | Dotfiles para o Termux |
 | `Kitty/` | Configuração do terminal Kitty (só distros) |
@@ -32,7 +32,36 @@ cd Minhas-Paradas
 bash setup.sh
 ```
 
-Rode como usuário normal, não como root. O script usa `sudo` quando precisa. A única exceção é o Arch Linux ARM dentro de proot (veja abaixo), onde ele detecta o ambiente e aceita root.
+Como rodar depende do ambiente:
+
+| Ambiente | Como rodar | O que acontece |
+| -------- | ---------- | -------------- |
+| Distro de desktop | Como root (`su -`) ou como usuário com `sudo` | Cria o usuário `gustavo` e aplica todo o setup nele (veja abaixo) |
+| Termux | Como usuário normal | Aplica o setup direto no seu usuário |
+| Arch Linux ARM no proot | Como root (o script detecta o ambiente) | Aplica o setup direto, sem criar usuário (veja abaixo) |
+
+O script precisa estar salvo em arquivo (`git clone` e `bash setup.sh`). Rodar via `curl ... | bash` não funciona nas distros, porque a segunda fase reexecuta o próprio arquivo.
+
+Para ver tudo o que seria feito sem alterar nada, use `bash setup.sh --dry-run`.
+
+## Usuário gustavo (distros de desktop)
+
+Nas distros de desktop o script trabalha em duas fases:
+
+1. **Como root:** instala os pacotes do sistema (incluindo `sudo`, se faltar) e cria o usuário:
+   - nome `gustavo`, home `/home/gustavo`, shell zsh (registrado em `/etc/shells` se preciso);
+   - grupos `wheel`, `audio` e `video` (o `wheel` é criado nas distros que não o têm, como o Debian);
+   - sudo liberado por `/etc/sudoers.d/10-gustavo`, validado com `visudo` antes de instalar (a senha continua sendo exigida);
+   - `passwd gustavo` para você escolher a senha. Se a senha já estiver definida, ela é mantida.
+2. **Como `gustavo`:** o script reexecuta a si mesmo e faz o setup tradicional (paru, oh-my-zsh, powerlevel10k, plugins, dotfiles, Kitty, `EDITOR` e fontes), tudo dentro de `/home/gustavo`.
+
+No Arch/CachyOS, o `gustavo` recebe sudo **sem senha apenas durante a instalação do `paru`** (o `makepkg` precisa disso). O arquivo temporário `/etc/sudoers.d/99-setup-tmp` é removido assim que a fase termina, mesmo se ela falhar.
+
+Se o usuário já existir, o script só ajusta grupos e shell. Para usar outro nome: `NEW_USER=nome bash setup.sh`.
+
+## Simulação (--dry-run)
+
+`bash setup.sh --dry-run` (ou `-n`) mostra o que o script faria sem alterar nada, nem precisa de root. Linhas `[dry]` são comandos que seriam executados e linhas `[sim]` são mensagens simuladas. Leituras (checar se um grupo, usuário ou repositório já existe) são feitas de verdade, então a saída reflete o estado atual da máquina. Como o repo não é clonado na simulação, os arquivos de dotfiles aparecem como "copiaria" em vez de comparados com os existentes.
 
 ## Arch Linux ARM no proot (proot-distro)
 
@@ -46,11 +75,15 @@ O script detecta sozinho quando está no Arch Linux ARM rodando dentro de um pro
 6. **Não** instala `paru`, Kitty, `fontconfig` nem fontes. A fonte é a do próprio Termux.
 7. Aplica os dotfiles de `Distro Normal/`.
 
+O proot não cria o usuário `gustavo`: tudo é aplicado ao próprio root.
+
 Se a detecção falhar, force com `FORCE_ALARM_PROOT=1 bash setup.sh`.
 
-Fora desse caso, rodar como root continua bloqueado de propósito.
+No Termux, rodar como root continua bloqueado de propósito.
 
 ## O que o script faz
+
+Nas distros de desktop, as etapas 1 a 3 rodam como root; depois o script cria o usuário `gustavo` (seção acima) e as etapas 4 a 10 rodam como ele. No Termux e no proot tudo roda direto, sem criar usuário.
 
 1. Detecta o gerenciador de pacotes: `pkg` (Termux), `apt`, `dnf` ou `pacman`.
 2. Instala `zsh git curl fastfetch micro fzf zoxide`. Um pacote indisponível não interrompe o script, só aparece na lista de falhas no final.
@@ -62,7 +95,7 @@ Fora desse caso, rodar como root continua bloqueado de propósito.
    - Distros: `Distro Normal/.zshrc`, `.p10k.zsh` e `.p10k-ascii.zsh`.
 7. **Só em distros:** copia `Kitty/kitty.conf` para `~/.config/kitty/kitty.conf`.
 8. Define `EDITOR` e `VISUAL` como `micro` em `~/.zshenv`, se ainda não estiverem definidos.
-9. Troca o shell padrão para o zsh.
+9. Troca o shell padrão para o zsh. Nas distros de desktop isso já foi feito ao criar o usuário (`usermod -s`).
 10. Instala a fonte MesloLGS NF:
     - Termux: baixa só a Regular, como `~/.termux/font.ttf`.
     - Distros: baixa Regular, Bold, Italic e Bold Italic (do repo `romkatv/powerlevel10k-media`) para `~/.local/share/fonts/MesloLGS-NF` e atualiza o cache com `fc-cache`.
@@ -78,7 +111,10 @@ Como o repo é a fonte da verdade, alterações feitas direto no `~/.zshrc` ou n
 ## Limitações
 
 - O `emerge` (Gentoo) ainda não é suportado.
-- O modo proot foi feito para o Arch Linux ARM. Outras distros em proot (Debian, Ubuntu etc.) rodam como root e ficam bloqueadas pelo script.
+- O modo proot foi feito para o Arch Linux ARM. Outras distros em proot (Debian, Ubuntu etc.) não têm modo próprio: o script as trata como distro de desktop, o que não foi testado.
+- Nas distros de desktop o setup é sempre aplicado ao usuário `gustavo`, e não ao usuário que rodou o script. Para rodar de novo depois, basta executar o script outra vez (por root ou por qualquer usuário com `sudo`, inclusive o próprio `gustavo`).
+- Termux e proot não criam usuário.
+- O sudo do `gustavo` exige senha. A exceção é a instalação do `paru` no Arch/CachyOS, descrita acima.
 - O `fastfetch` não existe nos repositórios do Debian 12 e do Ubuntu 22.04. Nessas versões ele aparece como falha e o `fastfetch` na primeira linha do `.zshrc` mostra "command not found" a cada terminal novo.
 - O Kitty e as fontes só são instalados em distros. No Termux a fonte é trocada pelo `termux-reload-settings`, sem `fc-cache`.
 - Em terminais que não sejam o Kitty, você precisa selecionar **MesloLGS NF** nas preferências do terminal. O `kitty.conf` já aponta para ela.
