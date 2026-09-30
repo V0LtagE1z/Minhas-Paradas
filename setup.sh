@@ -27,7 +27,8 @@ DOTFILES_TERMUX=(.zshrc .p10k.zsh)
 DOTFILES_DISTRO=(.zshrc .p10k.zsh .p10k-ascii.zsh)
 
 # Caminhos que podem ser sobrescritos por variável de ambiente (útil para testar).
-OS_RELEASE_FILE="${OS_RELEASE_FILE:-/etc/os-release}"
+OS_RELEASE_FILE="${OS_RELEASE_FILE:-}"
+ARCH_RELEASE_FILE="${ARCH_RELEASE_FILE:-/etc/arch-release}"
 PROC_STATUS_FILE="${PROC_STATUS_FILE:-/proc/self/status}"
 PACMAN_CONF="${PACMAN_CONF:-/etc/pacman.conf}"
 
@@ -46,8 +47,22 @@ ALARM_PROOT=0   # 1 = Arch Linux ARM rodando dentro de um proot (ex.: proot-dist
 detect_env() {
   if [[ ${FORCE_ALARM_PROOT:-0} == 1 ]]; then ALARM_PROOT=1; return 0; fi
 
-  local is_alarm=0 tracer
-  if grep -qiE '^(ID="?archarm"?|NAME="?Arch Linux ARM)' "$OS_RELEASE_FILE" 2>/dev/null; then
+  local is_alarm=0 tracer arch f
+  # Algumas imagens (ex.: proot-distro do ALARM) não têm /etc/os-release; o arquivo
+  # canônico é /usr/lib/os-release, então tentamos os dois.
+  if [[ -z $OS_RELEASE_FILE ]]; then
+    for f in /etc/os-release /usr/lib/os-release; do
+      if [[ -r $f ]]; then OS_RELEASE_FILE=$f; break; fi
+    done
+  fi
+  if [[ -n $OS_RELEASE_FILE ]] \
+     && grep -qiE '^(ID="?archarm"?|NAME="?Arch Linux ARM)' "$OS_RELEASE_FILE" 2>/dev/null; then
+    is_alarm=1
+  fi
+  # Segundo critério: Arch (tem /etc/arch-release) em CPU ARM só pode ser o ALARM,
+  # já que o Arch oficial não tem build aarch64.
+  arch=${UNAME_M:-$(uname -m 2>/dev/null || true)}
+  if ((! is_alarm)) && [[ -e $ARCH_RELEASE_FILE ]] && [[ $arch == aarch64 || $arch == arm* ]]; then
     is_alarm=1
   fi
   # No proot cada processo é rastreado (ptrace) pelo próprio proot: TracerPid != 0.
