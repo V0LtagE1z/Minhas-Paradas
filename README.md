@@ -77,7 +77,7 @@ Como o repo é a fonte da verdade, alterações feitas direto no `~/.zshrc` ou n
 
 ## Limitações
 
-- O `emerge` (Gentoo) não é suportado.
+- O `emerge` (Gentoo) ainda não é suportado.
 - O modo proot foi feito para o Arch Linux ARM. Outras distros em proot (Debian, Ubuntu etc.) rodam como root e ficam bloqueadas pelo script.
 - O `fastfetch` não existe nos repositórios do Debian 12 e do Ubuntu 22.04. Nessas versões ele aparece como falha e o `fastfetch` na primeira linha do `.zshrc` mostra "command not found" a cada terminal novo.
 - O Kitty e as fontes só são instalados em distros. No Termux a fonte é trocada pelo `termux-reload-settings`, sem `fc-cache`.
