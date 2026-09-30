@@ -20,9 +20,6 @@ Em uma máquina nova, baixe e rode o script:
 git clone https://github.com/V0LtagE1z/Minhas-Paradas.git ~/Minhas-Paradas
 bash ~/Minhas-Paradas/setup.sh
 ```
-
-Variáveis opcionais: `REPO_URL` (outro repositório) e `REPO_DIR` (onde clonar, padrão `~/Minhas-Paradas`).
-
 ## O que o script faz
 
 1. Detecta o gerenciador de pacotes: `pkg` (Termux), `apt`, `dnf` ou `pacman`.
