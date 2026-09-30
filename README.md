@@ -32,7 +32,23 @@ cd Minhas-Paradas
 bash setup.sh
 ```
 
-Rode como usuário normal, não como root. O script usa `sudo` quando precisa.
+Rode como usuário normal, não como root. O script usa `sudo` quando precisa. A única exceção é o Arch Linux ARM dentro de proot (veja abaixo), onde ele detecta o ambiente e aceita root.
+
+## Arch Linux ARM no proot (proot-distro)
+
+O script detecta sozinho quando está no Arch Linux ARM rodando dentro de um proot (`ID=archarm` em `/etc/os-release` e processo rastreado por ptrace). Nesse modo ele:
+
+1. Aceita rodar como root e não usa `sudo`.
+2. Ajusta o `/etc/pacman.conf` (com backup em `pacman.conf.bak`): comenta `CheckSpace` e `DownloadUser` e ativa a opção de desligar o sandbox do pacman (`DisableSandbox` no pacman 7.0; `DisableSandboxFilesystem` e `DisableSandboxSyscalls` no 7.1+).
+3. Inicializa o chaveiro (`pacman-key --init` e `--populate archlinuxarm`), se ainda não estiver inicializado.
+4. Roda `pacman -Syu` uma vez (rootfs de ARM costuma ser antigo) e reaplica o ajuste do `pacman.conf`, porque o pacman novo pode trazer outras opções.
+5. Gera os locales `pt_BR.UTF-8` e `en_US.UTF-8`, usados pelo `.zshrc`.
+6. **Não** instala `paru`, Kitty, `fontconfig` nem fontes. A fonte é a do próprio Termux.
+7. Aplica os dotfiles de `Distro Normal/`.
+
+Se a detecção falhar, force com `FORCE_ALARM_PROOT=1 bash setup.sh`.
+
+Fora desse caso, rodar como root continua bloqueado de propósito.
 
 ## O que o script faz
 
@@ -62,6 +78,7 @@ Como o repo é a fonte da verdade, alterações feitas direto no `~/.zshrc` ou n
 ## Limitações
 
 - O `emerge` (Gentoo) não é suportado.
+- O modo proot foi feito para o Arch Linux ARM. Outras distros em proot (Debian, Ubuntu etc.) rodam como root e ficam bloqueadas pelo script.
 - O `fastfetch` não existe nos repositórios do Debian 12 e do Ubuntu 22.04. Nessas versões ele aparece como falha e o `fastfetch` na primeira linha do `.zshrc` mostra "command not found" a cada terminal novo.
 - O Kitty e as fontes só são instalados em distros. No Termux a fonte é trocada pelo `termux-reload-settings`, sem `fc-cache`.
 - Em terminais que não sejam o Kitty, você precisa selecionar **MesloLGS NF** nas preferências do terminal. O `kitty.conf` já aponta para ela.
