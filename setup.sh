@@ -9,7 +9,7 @@ REPO_URL="${REPO_URL:-https://github.com/V0LtagE1z/Minhas-Paradas.git}"
 REPO_DIR="${REPO_DIR:-$HOME/Minhas-Paradas}"
 
 # Pacotes (o nome é igual nos 4 gerenciadores). Adicione os outros aqui.
-PACKAGES=(zsh git curl fastfetch micro fzf zoxide)
+PACKAGES=(zsh git curl fastfetch micro fzf zoxide wget)
 
 # Pacotes só para distros de desktop (ignorados no Termux).
 # fontconfig garante o fc-cache/fc-list usados na instalação das fontes.
