@@ -11,8 +11,18 @@ REPO_DIR="${REPO_DIR:-$HOME/Minhas-Paradas}"
 # Pacotes (o nome é igual nos 4 gerenciadores). Adicione os outros aqui.
 PACKAGES=(zsh git curl fastfetch micro fzf zoxide)
 
-# Arquivos na raiz do repo que serão copiados para o $HOME.
-DOTFILES=(.zshrc .p10k.zsh .p10k-ascii.zsh)
+# Pacotes só para distros de desktop (ignorados no Termux).
+# fontconfig garante o fc-cache/fc-list usados na instalação das fontes.
+DESKTOP_PACKAGES=(kitty fontconfig)
+
+# Estrutura do repo: cada ambiente tem a sua subpasta com os próprios dotfiles.
+DIR_TERMUX="Termux"
+DIR_DISTRO="Distro Normal"
+DIR_KITTY="Kitty"
+
+# Arquivos de cada subpasta que serão copiados para o $HOME.
+DOTFILES_TERMUX=(.zshrc .p10k.zsh)
+DOTFILES_DISTRO=(.zshrc .p10k.zsh .p10k-ascii.zsh)
 
 # ─── Utilidades ───────────────────────────────────────────────────────────────
 log()  { printf '\033[1;32m[ok]\033[0m %s\n' "$*"; }
@@ -60,6 +70,19 @@ install_packages() {
   for p in "${PACKAGES[@]}"; do
     if pm_install "$p"; then
       log "pacote: $p"
+    else
+      warn "falhou: $p"
+      FAILED+=("$p")
+    fi
+  done
+}
+
+install_desktop_packages() {
+  [[ $PM != pkg ]] || return 0   # Kitty e fontconfig não se aplicam ao Termux
+  local p
+  for p in "${DESKTOP_PACKAGES[@]}"; do
+    if pm_install "$p"; then
+      log "pacote (desktop): $p"
     else
       warn "falhou: $p"
       FAILED+=("$p")
@@ -128,10 +151,26 @@ backup_and_copy() {  # origem destino
 
 deploy_dotfiles() {
   clone_or_update "$REPO_URL" "$REPO_DIR"
-  local f
-  for f in "${DOTFILES[@]}"; do
-    backup_and_copy "$REPO_DIR/$f" "$HOME/$f"
+
+  # Termux e distro normal têm dotfiles diferentes, cada um na sua subpasta.
+  local sub f
+  local -a files
+  if [[ $PM == pkg ]]; then
+    sub=$DIR_TERMUX;  files=("${DOTFILES_TERMUX[@]}")
+  else
+    sub=$DIR_DISTRO;  files=("${DOTFILES_DISTRO[@]}")
+  fi
+
+  log "Aplicando dotfiles de: $sub/"
+  for f in "${files[@]}"; do
+    backup_and_copy "$REPO_DIR/$sub/$f" "$HOME/$f"
   done
+}
+
+deploy_kitty() {
+  [[ $PM != pkg ]] || return 0   # Kitty não existe no Termux
+  mkdir -p "$HOME/.config/kitty"
+  backup_and_copy "$REPO_DIR/$DIR_KITTY/kitty.conf" "$HOME/.config/kitty/kitty.conf"
 }
 
 ensure_editor() {
@@ -177,7 +216,7 @@ desktop_fonts() {
   [[ $PM != pkg ]] || return 0   # no Termux a fonte é tratada em termux_font
   local dir="$HOME/.local/share/fonts/MesloLGS-NF"
   local base="https://github.com/romkatv/powerlevel10k-media/raw/master"
-  local style file tmp installed=0
+  local style file tmp installed=0 failed=0
   mkdir -p "$dir"
   for style in "Regular" "Bold" "Italic" "Bold Italic"; do
     file="MesloLGS NF $style.ttf"
@@ -189,14 +228,26 @@ desktop_fonts() {
       installed=$((installed + 1))
     else
       rm -f "$tmp"
+      failed=$((failed + 1))
       warn "não consegui baixar: $file"
     fi
   done
   if ((installed > 0)); then
-    if command -v fc-cache >/dev/null; then fc-cache -f "$dir" || true; fi
-    log "MesloLGS NF instalada em $dir ($installed arquivo(s)); selecione-a nas preferências do seu terminal"
-  else
+    log "MesloLGS NF: $installed arquivo(s) novo(s) em $dir"
+  elif ((failed == 0)); then
     log "MesloLGS NF já instalada"
+  fi
+
+  # Atualiza o cache mesmo quando nada foi baixado agora (ex.: rodada anterior interrompida).
+  if command -v fc-cache >/dev/null; then
+    fc-cache -f "$HOME/.local/share/fonts" || warn "fc-cache falhou"
+    if fc-list | grep -qi "MesloLGS NF"; then
+      log "fonte reconhecida pelo fontconfig"
+    else
+      warn "MesloLGS NF não apareceu no fc-list; reinicie a sessão ou rode: fc-cache -f"
+    fi
+  else
+    warn "fc-cache não encontrado (instale o fontconfig); a fonte pode não aparecer até um novo login"
   fi
 }
 
@@ -207,9 +258,11 @@ main() {
   detect_pm
   pm_update
   install_packages
+  install_desktop_packages
   install_paru
   install_zsh_stack
   deploy_dotfiles
+  deploy_kitty
   ensure_editor
   set_default_shell
   termux_font
