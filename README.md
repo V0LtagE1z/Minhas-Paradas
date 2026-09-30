@@ -1,7 +1,7 @@
 # Só Quero Facilitar Ae
 ### Pumba Lá Pumba
 
-Meus dotfiles de terminal e um script que monta tudo em uma máquina nova, seja uma distro Linux ou o Termux.
+Meus dotfiles de terminal em um script que monta tudo em uma máquina nova, seja uma distro Linux ou o Termux.
 
 ## Conteúdo
 
