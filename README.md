@@ -27,8 +27,9 @@ Arquivos de cada pasta:
 Em uma máquina nova, baixe e rode o script:
 
 ```
-git clone https://github.com/V0LtagE1z/Minhas-Paradas.git ~/Minhas-Paradas
-bash ~/Minhas-Paradas/setup.sh
+git clone https://github.com/V0LtagE1z/Minhas-Paradas.git
+cd Minhas-Paradas
+bash setup.sh
 ```
 
 Rode como usuário normal, não como root. O script usa `sudo` quando precisa.
