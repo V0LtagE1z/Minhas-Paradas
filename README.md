@@ -36,7 +36,7 @@ Como rodar depende do ambiente:
 
 | Ambiente | Como rodar | O que acontece |
 | -------- | ---------- | -------------- |
-| Distro de desktop | Como root (`su -`) ou como usuário com `sudo` | Cria o usuário `gustavo` e aplica todo o setup nele (veja abaixo) |
+| Distro de desktop | Como root (`su -`) ou como usuário com `sudo` | Cria o usuário `gustavo` e aplica todo o setup nele; o root também passa a usar zsh (veja abaixo) |
 | Termux | Como usuário normal | Aplica o setup direto no seu usuário |
 | Arch Linux ARM no proot | Como root (o script detecta o ambiente) | Aplica o setup direto, sem criar usuário (veja abaixo) |
 
@@ -50,12 +50,15 @@ Nas distros de desktop o script trabalha em duas fases:
 
 1. **Como root:** instala os pacotes do sistema (incluindo `sudo`, se faltar) e cria o usuário:
    - nome `gustavo`, home `/home/gustavo`, shell zsh (registrado em `/etc/shells` se preciso);
+   - o shell do **root** também é trocado para zsh (`usermod -s`);
    - grupos `wheel`, `audio` e `video` (o `wheel` é criado nas distros que não o têm, como o Debian);
    - sudo liberado por `/etc/sudoers.d/10-gustavo`, validado com `visudo` antes de instalar (a senha continua sendo exigida);
    - `passwd gustavo` para você escolher a senha. Se a senha já estiver definida, ela é mantida.
 2. **Como `gustavo`:** o script reexecuta a si mesmo e faz o setup tradicional (paru, oh-my-zsh, powerlevel10k, plugins, dotfiles, Kitty, `EDITOR` e fontes), tudo dentro de `/home/gustavo`.
 
 No Arch/CachyOS, o `gustavo` recebe sudo **sem senha apenas durante a instalação do `paru`** (o `makepkg` precisa disso). O arquivo temporário `/etc/sudoers.d/99-setup-tmp` é removido assim que a fase termina, mesmo se ela falhar.
+
+Os dotfiles são aplicados só ao `gustavo`. O root passa a usar zsh, mas sem `~/.zshrc`, então o zsh costuma mostrar o assistente de configuração inicial no primeiro login dele.
 
 Se o usuário já existir, o script só ajusta grupos e shell. Para usar outro nome: `NEW_USER=nome bash setup.sh`.
 
@@ -95,7 +98,7 @@ Nas distros de desktop, as etapas 1 a 3 rodam como root; depois o script cria o 
    - Distros: `Distro Normal/.zshrc`, `.p10k.zsh` e `.p10k-ascii.zsh`.
 7. **Só em distros:** copia `Kitty/kitty.conf` para `~/.config/kitty/kitty.conf`.
 8. Define `EDITOR` e `VISUAL` como `micro` em `~/.zshenv`, se ainda não estiverem definidos.
-9. Troca o shell padrão para o zsh. Nas distros de desktop isso já foi feito ao criar o usuário (`usermod -s`).
+9. Troca o shell padrão para o zsh. Nas distros de desktop isso já foi feito (`usermod -s`) para o `gustavo` e para o root.
 10. Instala a fonte MesloLGS NF:
     - Termux: baixa só a Regular, como `~/.termux/font.ttf`.
     - Distros: baixa Regular, Bold, Italic e Bold Italic (do repo `romkatv/powerlevel10k-media`) para `~/.local/share/fonts/MesloLGS-NF` e atualiza o cache com `fc-cache`.
