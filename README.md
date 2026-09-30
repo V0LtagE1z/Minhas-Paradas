@@ -17,15 +17,6 @@ Meus dotfiles de terminal em um script que monta tudo em uma máquina nova, seja
 Em uma máquina nova, baixe e rode o script:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/V0LtagE1z/Minhas-Paradas/main/setup.sh
-bash setup.sh
-```
-
-Rode como usuário normal, não como root. O script usa `sudo` quando precisa. Não use `curl | bash`: o `sudo` e o `chsh` precisam do terminal para pedir a senha.
-
-Se preferir clonar antes, use o caminho padrão, para o script não criar uma segunda cópia:
-
-```bash
 git clone https://github.com/V0LtagE1z/Minhas-Paradas.git ~/Minhas-Paradas
 bash ~/Minhas-Paradas/setup.sh
 ```
