@@ -1,14 +1,32 @@
 #!/usr/bin/env bash
-# setup.sh — pós-instalação: zsh + oh-my-zsh + powerlevel10k + dotfiles do repo Minhas-Paradas.
+# setup.sh — pós-instalação: usuário + zsh + oh-my-zsh + powerlevel10k + dotfiles do repo Minhas-Paradas.
 # Suporta: Termux (pkg), Debian/Ubuntu (apt), Fedora (dnf), Arch/CachyOS (pacman + paru)
 # e Arch Linux ARM dentro de proot (pacman, como root, sem paru/Kitty/fontes).
-# Pode ser executado várias vezes sem quebrar nada. Rode como usuário normal (não root),
-# exceto no Arch Linux ARM em proot, onde o script detecta o ambiente e aceita root.
+#
+# Distros de desktop: rode como root (ou com sudo). O script
+#   1. instala os pacotes do sistema;
+#   2. cria o usuário "gustavo" (home /home/gustavo, shell zsh, grupos wheel/audio/video);
+#   3. dá sudo a ele e pede a senha dele;
+#   4. executa o setup tradicional (paru, oh-my-zsh, p10k, dotfiles, Kitty, fontes) COMO esse usuário.
+# Termux e Arch Linux ARM em proot: não criam usuário; rodam o setup tradicional direto
+# (Termux como usuário normal; proot como root, onde o script detecta o ambiente).
+#
+# Use --dry-run para ver o que seria feito sem alterar nada.
+# Pode ser executado várias vezes sem quebrar nada.
 set -euo pipefail
 
+# No Debian, "su" sem "-" não traz /usr/sbin no PATH (useradd, usermod, visudo).
+export PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"
+
 # ─── Configuração ─────────────────────────────────────────────────────────────
+REPO_DIR_USER="${REPO_DIR:-}"   # guarda se o REPO_DIR foi escolhido pelo usuário
 REPO_URL="${REPO_URL:-https://github.com/V0LtagE1z/Minhas-Paradas.git}"
 REPO_DIR="${REPO_DIR:-$HOME/Minhas-Paradas}"
+
+# Usuário criado nas distros de desktop.
+NEW_USER="${NEW_USER:-gustavo}"
+NEW_HOME="/home/$NEW_USER"
+NEW_GROUPS=(wheel audio video)
 
 # Pacotes (o nome é igual nos 4 gerenciadores). Adicione os outros aqui.
 PACKAGES=(zsh git curl fastfetch micro fzf zoxide)
@@ -33,17 +51,82 @@ PROC_STATUS_FILE="${PROC_STATUS_FILE:-/proc/self/status}"
 PACMAN_CONF="${PACMAN_CONF:-/etc/pacman.conf}"
 
 # ─── Utilidades ───────────────────────────────────────────────────────────────
-log()  { printf '\033[1;32m[ok]\033[0m %s\n' "$*"; }
+DRY_RUN="${DRY_RUN:-0}"   # 1 = só mostra o que seria feito (--dry-run)
+
+# Em simulação o prefixo é [sim], para não parecer que algo foi feito de verdade.
+log()  {
+  if ((DRY_RUN)); then printf '\033[1;36m[sim]\033[0m %s\n' "$*"
+  else printf '\033[1;32m[ok]\033[0m %s\n' "$*"; fi
+}
 warn() { printf '\033[1;33m[!!]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[erro]\033[0m %s\n' "$*" >&2; exit 1; }
+
+# Executa o comando; em --dry-run só imprime.
+run() {
+  if ((DRY_RUN)); then
+    local a
+    printf '\033[1;36m[dry]\033[0m'
+    for a in "$@"; do
+      # Argumentos simples saem como estão; os demais entre aspas simples (mais legível que %q).
+      if [[ $a =~ ^[A-Za-z0-9_@%+=:,./-]+$ ]]; then printf ' %s' "$a"
+      elif [[ $a != *\'* ]]; then printf " '%s'" "$a"
+      else printf ' %q' "$a"; fi
+    done
+    printf '\n'
+    return 0
+  fi
+  "$@"
+}
+
+append_line() {  # linha arquivo — acrescenta ao final, com sudo se preciso
+  local line=$1 file=$2
+  if ((DRY_RUN)); then
+    printf '\033[1;36m[dry]\033[0m echo %q >> %q\n' "$line" "$file"
+  else
+    printf '%s\n' "$line" | $SUDO tee -a "$file" >/dev/null
+  fi
+}
 
 PM=""
 SUDO="sudo"
 FAILED=()
 ALARM_PROOT=0   # 1 = Arch Linux ARM rodando dentro de um proot (ex.: proot-distro no Termux)
+USER_PHASE=0    # 1 = chamado pelo próprio script, já como o novo usuário (interno)
+SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]:-$0}" 2>/dev/null || true)
 
-# Arch Linux ARM dentro de proot: é o único caso em que rodar como root é permitido.
-# FORCE_ALARM_PROOT=1 força o modo caso a detecção falhe.
+CLEANUP_FILES=()
+cleanup() {
+  local f
+  for f in ${CLEANUP_FILES[@]+"${CLEANUP_FILES[@]}"}; do rm -f -- "$f"; done
+  CLEANUP_FILES=()
+}
+trap cleanup EXIT
+
+usage() {
+  cat <<EOF
+Uso: bash setup.sh [--dry-run]
+
+  --dry-run, -n   mostra o que seria feito (linhas [dry] e [sim]) sem alterar nada
+  --help, -h      mostra esta ajuda
+
+Variáveis úteis: NEW_USER (padrão: gustavo), REPO_URL, REPO_DIR, FORCE_ALARM_PROOT=1.
+EOF
+}
+
+parse_args() {
+  local a
+  for a in "$@"; do
+    case $a in
+      --dry-run|-n) DRY_RUN=1 ;;
+      --user-phase) USER_PHASE=1 ;;   # interno
+      -h|--help)    usage; exit 0 ;;
+      *)            die "Opção desconhecida: $a (veja: bash setup.sh --help)" ;;
+    esac
+  done
+}
+
+# Arch Linux ARM dentro de proot: é o único caso em que rodar como root é permitido
+# sem criar usuário. FORCE_ALARM_PROOT=1 força o modo caso a detecção falhe.
 detect_env() {
   if [[ ${FORCE_ALARM_PROOT:-0} == 1 ]]; then ALARM_PROOT=1; return 0; fi
 
@@ -79,7 +162,6 @@ detect_pm() {
   # O ALARM/proot vem antes de tudo: variáveis do Termux podem vazar para dentro do proot.
   if ((ALARM_PROOT)); then
     PM=pacman
-    if [[ $EUID -eq 0 ]]; then SUDO=""; fi
     log "Modo Arch Linux ARM (proot) detectado"
   # Termux precisa ser checado antes do apt: ele também tem apt-get.
   elif [[ -n "${TERMUX_VERSION:-}" || "${PREFIX:-}" == *com.termux* ]]; then
@@ -89,26 +171,31 @@ detect_pm() {
   elif command -v pacman >/dev/null;  then PM=pacman
   else die "Gerenciador de pacotes não suportado (emerge não está incluído)."
   fi
+
+  # Root não precisa de sudo.
+  if [[ $EUID -eq 0 ]]; then SUDO=""; fi
   if [[ -n $SUDO ]] && ! command -v sudo >/dev/null; then
-    die "sudo não encontrado. Instale-o ou ajuste o script."
+    if ((DRY_RUN)); then warn "sudo não encontrado (na simulação ele seria instalado)"
+    else die "sudo não encontrado. Rode este script como root (su -)."
+    fi
   fi
   log "Gerenciador detectado: $PM"
 }
 
 pm_update() {
   case $PM in
-    pkg) pkg update -y ;;
-    apt) $SUDO apt-get update ;;
+    pkg) run pkg update -y ;;
+    apt) run $SUDO apt-get update ;;
     *)   : ;;  # dnf atualiza metadados sozinho; no pacman evitamos -Sy isolado
   esac
 }
 
 pm_install() {  # instala UM pacote
   case $PM in
-    pkg)    pkg install -y "$1" ;;
-    apt)    $SUDO apt-get install -y "$1" ;;
-    dnf)    $SUDO dnf install -y "$1" ;;
-    pacman) $SUDO pacman -S --needed --noconfirm "$1" ;;
+    pkg)    run pkg install -y "$1" ;;
+    apt)    run $SUDO apt-get install -y "$1" ;;
+    dnf)    run $SUDO dnf install -y "$1" ;;
+    pacman) run $SUDO pacman -S --needed --noconfirm "$1" ;;
   esac
 }
 
@@ -150,9 +237,9 @@ conf_enable() {  # ativa uma diretiva sem valor em [options] (descomenta ou inse
   local opt=$1 conf=$PACMAN_CONF
   if grep -qE "^[[:space:]]*$opt[[:space:]]*$" "$conf"; then return 0; fi
   if grep -qE "^[[:space:]]*#[[:space:]]*$opt[[:space:]]*$" "$conf"; then
-    sed -i -E "s/^[[:space:]]*#[[:space:]]*($opt)[[:space:]]*$/\1/" "$conf"
+    run sed -i -E "s/^[[:space:]]*#[[:space:]]*($opt)[[:space:]]*$/\1/" "$conf"
   else
-    sed -i "/^\[options\]/a $opt" "$conf"
+    run sed -i "/^\[options\]/a $opt" "$conf"
   fi
   log "pacman.conf: $opt ativado"
 }
@@ -160,7 +247,7 @@ conf_enable() {  # ativa uma diretiva sem valor em [options] (descomenta ou inse
 conf_disable() {  # comenta uma diretiva (com ou sem valor)
   local opt=$1 conf=$PACMAN_CONF
   if grep -qE "^[[:space:]]*$opt([[:space:]=]|$)" "$conf"; then
-    sed -i -E "s/^([[:space:]]*$opt([[:space:]=]|$))/#\1/" "$conf"
+    run sed -i -E "s/^([[:space:]]*$opt([[:space:]=]|$))/#\1/" "$conf"
     log "pacman.conf: $opt desativado"
   fi
 }
@@ -168,7 +255,7 @@ conf_disable() {  # comenta uma diretiva (com ou sem valor)
 patch_pacman_conf() {
   local conf=$PACMAN_CONF ver major minor
   [[ -f $conf ]] || { warn "$conf não encontrado"; return 0; }
-  if [[ ! -e $conf.bak ]]; then cp -a "$conf" "$conf.bak"; log "backup: $conf.bak"; fi
+  if [[ ! -e $conf.bak ]]; then run cp -a "$conf" "$conf.bak"; log "backup: $conf.bak"; fi
 
   conf_disable CheckSpace
   conf_disable DownloadUser
@@ -197,8 +284,8 @@ patch_pacman_conf() {
 init_keyring() {
   if [[ -s /etc/pacman.d/gnupg/trustdb.gpg ]]; then return 0; fi
   log "Inicializando o chaveiro do pacman (pode demorar no proot)..."
-  $SUDO pacman-key --init || warn "pacman-key --init falhou"
-  $SUDO pacman-key --populate archlinuxarm || warn "pacman-key --populate falhou"
+  run $SUDO pacman-key --init || warn "pacman-key --init falhou"
+  run $SUDO pacman-key --populate archlinuxarm || warn "pacman-key --populate falhou"
 }
 
 gen_locales() {  # o .zshrc usa pt_BR.UTF-8 e en_US.UTF-8; rootfs mínimo costuma ter só uma
@@ -208,13 +295,13 @@ gen_locales() {  # o .zshrc usa pt_BR.UTF-8 e en_US.UTF-8; rootfs mínimo costum
   for l in "pt_BR.UTF-8 UTF-8" "en_US.UTF-8 UTF-8"; do
     if grep -qE "^${l}\s*$" "$f"; then continue; fi
     if grep -qE "^#\s*${l}\s*$" "$f"; then
-      $SUDO sed -i -E "s/^#\s*(${l})\s*$/\1/" "$f"
+      run $SUDO sed -i -E "s/^#\s*(${l})\s*$/\1/" "$f"
     else
-      printf '%s\n' "$l" | $SUDO tee -a "$f" >/dev/null
+      append_line "$l" "$f"
     fi
     changed=1
   done
-  if ((changed)); then $SUDO locale-gen && log "locales pt_BR e en_US geradas" || warn "locale-gen falhou"; fi
+  if ((changed)); then run $SUDO locale-gen && log "locales pt_BR e en_US geradas" || warn "locale-gen falhou"; fi
 }
 
 prepare_alarm_proot() {
@@ -223,16 +310,165 @@ prepare_alarm_proot() {
   init_keyring
   # Rootfs de ARM costuma ser antigo: -Sy sem -u causaria atualização parcial.
   log "Atualizando o sistema (pacman -Syu)..."
-  $SUDO pacman -Syu --noconfirm || warn "pacman -Syu falhou; os pacotes abaixo podem falhar"
+  run $SUDO pacman -Syu --noconfirm || warn "pacman -Syu falhou; os pacotes abaixo podem falhar"
   # O -Syu pode ter trazido um pacman mais novo, com outras opções de sandbox.
   patch_pacman_conf
   gen_locales
 }
 
+# ─── Fase 1 (root, só desktop): usuário, grupos, shell, sudo, senha ───────────
+install_sudoers() {  # nome-do-arquivo conteúdo — valida com visudo antes de instalar
+  local name=$1 content=$2 tmp
+  if ((DRY_RUN)); then
+    log "instalaria /etc/sudoers.d/$name com: $content"
+    return 0
+  fi
+  mkdir -p /etc/sudoers.d
+  tmp=$(mktemp)
+  printf '%s\n' "$content" > "$tmp"
+  if ! visudo -cf "$tmp" >/dev/null; then
+    rm -f "$tmp"
+    die "sudoers inválido para $name; nada foi instalado."
+  fi
+  install -m 440 -o root -g root "$tmp" "/etc/sudoers.d/$name"
+  rm -f "$tmp"
+}
+
+ensure_sudo() {
+  command -v sudo >/dev/null && return 0
+  log "sudo não encontrado; instalando"
+  pm_install sudo || die "não consegui instalar o sudo"
+  if ((! DRY_RUN)); then
+    command -v visudo >/dev/null || die "visudo não encontrado após instalar o sudo"
+  fi
+}
+
+create_user() {
+  local zsh_bin g groups=() csv
+  if ! zsh_bin=$(command -v zsh); then
+    if ((DRY_RUN)); then zsh_bin=/usr/bin/zsh
+    else die "zsh não foi instalado; não dá para defini-lo como shell de $NEW_USER."
+    fi
+  fi
+
+  # zsh precisa estar em /etc/shells para ser aceito como shell de login.
+  grep -qxF "$zsh_bin" /etc/shells 2>/dev/null || append_line "$zsh_bin" /etc/shells
+
+  # Só usa grupos que existem; "wheel" não existe no Debian, então é criado.
+  for g in "${NEW_GROUPS[@]}"; do
+    if ! getent group "$g" >/dev/null; then
+      if [[ $g == wheel ]]; then
+        run groupadd wheel
+        log "grupo criado: wheel"
+      else
+        warn "grupo $g não existe, pulando"
+        continue
+      fi
+    fi
+    groups+=("$g")
+  done
+  csv=$(IFS=,; echo "${groups[*]}")
+
+  if id -u "$NEW_USER" >/dev/null 2>&1; then
+    log "usuário $NEW_USER já existe; ajustando grupos e shell"
+    run usermod -aG "$csv" "$NEW_USER"
+    run usermod -s "$zsh_bin" "$NEW_USER"
+    local cur_home; cur_home=$(getent passwd "$NEW_USER" | cut -d: -f6)
+    [[ $cur_home == "$NEW_HOME" ]] || warn "home atual de $NEW_USER é $cur_home (esperado $NEW_HOME); não movi nada"
+  else
+    run useradd -m -d "$NEW_HOME" -s "$zsh_bin" -G "$csv" "$NEW_USER"
+    log "usuário criado: $NEW_USER (home $NEW_HOME, shell $zsh_bin, grupos $csv)"
+  fi
+}
+
+configure_sudo() {
+  # Drop-in próprio: funciona igual em Arch, Fedora e Debian, sem editar /etc/sudoers.
+  install_sudoers "10-$NEW_USER" "$NEW_USER ALL=(ALL:ALL) ALL"
+  grep -Eq '^[#@]includedir[[:space:]]+/etc/sudoers\.d' /etc/sudoers 2>/dev/null \
+    || warn "/etc/sudoers não inclui /etc/sudoers.d (ou não foi encontrado); confira com visudo"
+  log "sudo liberado para $NEW_USER"
+}
+
+set_password() {
+  local st i
+  if ((DRY_RUN)); then
+    log "pediria a senha de $NEW_USER (passwd $NEW_USER), se ainda não estiver definida"
+    return 0
+  fi
+  st=$(passwd -S "$NEW_USER" 2>/dev/null | awk '{print $2}' || true)
+  if [[ $st == P ]]; then log "senha de $NEW_USER já definida; mantendo"; return 0; fi
+  if [[ ! -t 0 ]]; then
+    warn "sem terminal interativo; defina a senha depois com: passwd $NEW_USER"
+    return 0
+  fi
+  echo "Defina a senha de $NEW_USER:"
+  for i in 1 2 3; do
+    if passwd "$NEW_USER"; then log "senha definida"; return 0; fi
+    warn "tentativa $i/3 falhou"
+  done
+  warn "senha NÃO definida; rode: passwd $NEW_USER"
+}
+
+run_user_phase() {
+  # No Arch o paru precisa de sudo sem senha durante o makepkg; removido logo depois.
+  local need_tmp_sudo=0
+  [[ $PM == pacman ]] && need_tmp_sudo=1
+
+  if ((DRY_RUN)); then
+    log "Fase do usuário $NEW_USER (simulada, home $NEW_HOME):"
+    if ((need_tmp_sudo)); then
+      install_sudoers "99-setup-tmp" "$NEW_USER ALL=(ALL:ALL) NOPASSWD: ALL"
+    fi
+    (
+      HOME=$NEW_HOME
+      [[ -n $REPO_DIR_USER ]] || REPO_DIR="$HOME/Minhas-Paradas"
+      SUDO="sudo"
+      run_user_steps
+    )
+    ((need_tmp_sudo)) && log "removeria /etc/sudoers.d/99-setup-tmp"
+    return 0
+  fi
+
+  [[ -f $SCRIPT_PATH ]] || die "Não achei o arquivo do script. Salve-o em disco e rode: bash setup.sh"
+  # Cópia legível pelo novo usuário (o original pode estar em /root).
+  local tmp; tmp=$(mktemp)
+  CLEANUP_FILES+=("$tmp")
+  cp -- "$SCRIPT_PATH" "$tmp"
+  chmod 755 "$tmp"
+
+  if ((need_tmp_sudo)); then
+    install_sudoers "99-setup-tmp" "$NEW_USER ALL=(ALL:ALL) NOPASSWD: ALL"
+    CLEANUP_FILES+=("/etc/sudoers.d/99-setup-tmp")
+  fi
+
+  log "Executando o setup tradicional como $NEW_USER"
+  (cd /tmp && sudo -H -u "$NEW_USER" env "REPO_URL=$REPO_URL" bash "$tmp" --user-phase) \
+    || warn "a fase do usuário terminou com erro; rode de novo para tentar completar"
+  cleanup
+}
+
+system_phase() {
+  pm_update
+  install_packages
+  install_desktop_packages
+  ensure_sudo
+  create_user
+  configure_sudo
+  set_password
+  run_user_phase
+}
+
+# ─── Setup tradicional (roda como o próprio usuário, ou como root no proot) ───
 install_paru() {
   if ((ALARM_PROOT)); then log "ALARM/proot: paru não é necessário, pulando"; return 0; fi
   [[ $PM == pacman ]] || return 0
   if command -v paru >/dev/null; then log "paru já instalado"; return 0; fi
+
+  if ((DRY_RUN)); then
+    run $SUDO pacman -S --needed --noconfirm paru
+    log "(se o repositório não tiver o paru, compilaria o paru-bin do AUR com makepkg)"
+    return 0
+  fi
 
   # CachyOS e alguns repos já trazem o paru pronto.
   if $SUDO pacman -S --needed --noconfirm paru 2>/dev/null; then
@@ -250,9 +486,9 @@ install_paru() {
 
 clone_or_update() {  # url destino
   if [[ -d $2/.git ]]; then
-    git -C "$2" pull --ff-only --quiet || warn "não consegui atualizar $2"
+    run git -C "$2" pull --ff-only --quiet || warn "não consegui atualizar $2"
   else
-    git clone --depth=1 "$1" "$2"
+    run git clone --depth=1 "$1" "$2"
   fi
 }
 
@@ -275,17 +511,23 @@ install_zsh_stack() {
 
 backup_and_copy() {  # origem destino
   local src=$1 dst=$2
-  if [[ ! -f $src ]]; then warn "$src não existe no repo, pulando"; return 0; fi
+  if [[ ! -f $src ]]; then
+    if ((DRY_RUN)); then
+      log "copiaria $src -> $dst (com backup se for diferente)"
+      return 0
+    fi
+    warn "$src não existe no repo, pulando"; return 0
+  fi
 
   if [[ -e $dst ]]; then
     if cmp -s "$src" "$dst"; then log "$dst já é igual ao do repo"; return 0; fi
     # .bak; se já existir, .bak.1, .bak.2... (nunca sobrescreve um backup antigo)
     local bak="$dst.bak" n=0
     while [[ -e $bak ]]; do n=$((n + 1)); bak="$dst.bak.$n"; done
-    cp -a "$dst" "$bak"
+    run cp -a "$dst" "$bak"
     log "backup: $bak"
   fi
-  cp "$src" "$dst"
+  run cp "$src" "$dst"
   log "copiado: $dst"
 }
 
@@ -309,7 +551,7 @@ deploy_dotfiles() {
 
 deploy_kitty() {
   is_desktop || return 0   # Kitty só em distro de desktop (não Termux, não proot)
-  mkdir -p "$HOME/.config/kitty"
+  run mkdir -p "$HOME/.config/kitty"
   backup_and_copy "$REPO_DIR/$DIR_KITTY/kitty.conf" "$HOME/.config/kitty/kitty.conf"
 }
 
@@ -322,18 +564,21 @@ ensure_editor() {
       return 0
     fi
   done
+  if ((DRY_RUN)); then log "definiria EDITOR/VISUAL=micro em ~/.zshenv"; return 0; fi
   printf '\n# adicionado por setup.sh\nexport EDITOR=micro\nexport VISUAL=micro\n' >> "$HOME/.zshenv"
   log "EDITOR/VISUAL=micro definido em ~/.zshenv"
 }
 
 set_default_shell() {
+  # Distros de desktop: o root já definiu o shell do novo usuário com usermod.
+  is_desktop && return 0
   local zsh_bin
   zsh_bin=$(command -v zsh) || { warn "zsh não encontrado, pulando chsh"; return 0; }
   if [[ ${SHELL:-} == "$zsh_bin" ]]; then return 0; fi
   if [[ $PM == pkg ]]; then
-    chsh -s zsh || warn "falhou; rode: chsh -s zsh"
+    run chsh -s zsh || warn "falhou; rode: chsh -s zsh"
   else
-    chsh -s "$zsh_bin" || warn "falhou; rode: chsh -s $zsh_bin"
+    run chsh -s "$zsh_bin" || warn "falhou; rode: chsh -s $zsh_bin"
   fi
 }
 
@@ -341,6 +586,7 @@ termux_font() {
   [[ $PM == pkg ]] || return 0
   local font="$HOME/.termux/font.ttf"
   if [[ -f $font ]]; then return 0; fi   # não sobrescreve fonte já escolhida
+  if ((DRY_RUN)); then log "baixaria a fonte MesloLGS NF Regular para $font"; return 0; fi
   mkdir -p "$HOME/.termux"
   if curl -fsSL -o "$font" \
       "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Regular.ttf"; then
@@ -357,6 +603,17 @@ desktop_fonts() {
   local dir="$HOME/.local/share/fonts/MesloLGS-NF"
   local base="https://github.com/romkatv/powerlevel10k-media/raw/master"
   local style file tmp installed=0 failed=0
+
+  if ((DRY_RUN)); then
+    for style in "Regular" "Bold" "Italic" "Bold Italic"; do
+      file="MesloLGS NF $style.ttf"
+      if [[ -s $dir/$file ]]; then continue; fi
+      log "baixaria: $file para $dir"
+    done
+    run fc-cache -f "$HOME/.local/share/fonts"
+    return 0
+  fi
+
   mkdir -p "$dir"
   for style in "Regular" "Bold" "Italic" "Bold Italic"; do
     file="MesloLGS NF $style.ttf"
@@ -391,18 +648,7 @@ desktop_fonts() {
   fi
 }
 
-# ─── Execução ─────────────────────────────────────────────────────────────────
-main() {
-  detect_env
-  if [[ $EUID -eq 0 && $ALARM_PROOT -ne 1 ]]; then
-    die "Rode como usuário normal; o script usa sudo quando precisa. (Root só é aceito no Arch Linux ARM dentro de proot.)"
-  fi
-
-  detect_pm
-  prepare_alarm_proot
-  pm_update
-  install_packages
-  install_desktop_packages
+run_user_steps() {
   install_paru
   install_zsh_stack
   deploy_dotfiles
@@ -411,13 +657,79 @@ main() {
   set_default_shell
   termux_font
   desktop_fonts
+}
 
-  echo
+print_failed() {
   if ((${#FAILED[@]})); then
     warn "Pacotes que não foram instalados: ${FAILED[*]}"
   fi
-  log "Pronto. Abra um novo terminal ou rode: exec zsh"
+  return 0
+}
+
+hint_p10k() {
   [[ -f $HOME/.p10k.zsh ]] || log "Sem .p10k.zsh no repo: rode 'p10k configure' na primeira abertura."
+  return 0
+}
+
+# ─── Execução ─────────────────────────────────────────────────────────────────
+main() {
+  parse_args "$@"
+  ((DRY_RUN)) && log "MODO SIMULAÇÃO: nada será alterado no sistema"
+
+  [[ $NEW_USER =~ ^[a-z_][a-z0-9_-]*$ ]] || die "Nome de usuário inválido: $NEW_USER"
+
+  detect_env
+  detect_pm
+
+  # Termux e Arch Linux ARM em proot: usuário único, sem criar conta.
+  if ! is_desktop; then
+    if [[ $EUID -eq 0 && $ALARM_PROOT -ne 1 ]]; then
+      die "Rode como usuário normal; o script usa sudo quando precisa. (Root só é aceito no Arch Linux ARM dentro de proot.)"
+    fi
+    prepare_alarm_proot
+    pm_update
+    install_packages
+    install_desktop_packages
+    run_user_steps
+    echo
+    print_failed
+    log "Pronto. Abra um novo terminal ou rode: exec zsh"
+    hint_p10k
+    return 0
+  fi
+
+  # Distros de desktop, fase 2: chamada pelo próprio script, já como o novo usuário.
+  if ((USER_PHASE)); then
+    [[ $EUID -ne 0 ]] || die "A fase do usuário não pode rodar como root."
+    run_user_steps
+    hint_p10k
+    return 0
+  fi
+
+  # Distros de desktop, fase 1: precisa de root.
+  if [[ $EUID -ne 0 ]]; then
+    if ((DRY_RUN)); then
+      log "reexecutaria com sudo; simulando como root"
+      SUDO=""
+    else
+      [[ -f $SCRIPT_PATH ]] || die "Salve o script em disco e rode: bash setup.sh"
+      log "Reexecutando com sudo"
+      exec sudo env "REPO_URL=$REPO_URL" "NEW_USER=$NEW_USER" bash "$SCRIPT_PATH" "$@"
+    fi
+  fi
+  if ((! DRY_RUN)); then
+    [[ -f $SCRIPT_PATH ]] || die "Salve o script em disco e rode: bash setup.sh"
+  fi
+
+  system_phase
+
+  echo
+  print_failed
+  if ((DRY_RUN)); then
+    log "Simulação concluída: nada foi alterado."
+  else
+    log "Pronto. Entre como $NEW_USER (faça login ou rode: su - $NEW_USER)."
+  fi
 }
 
 main "$@"
