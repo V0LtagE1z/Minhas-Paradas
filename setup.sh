@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # setup.sh — pós-instalação: usuário + zsh + oh-my-zsh + powerlevel10k + dotfiles do repo Minhas-Paradas.
 # Suporta: Termux (pkg), Debian/Ubuntu (apt), Fedora (dnf), Arch/CachyOS (pacman + paru)
-# e Arch Linux ARM dentro de proot (pacman, como root, sem paru/Kitty/fontes).
+# e essas mesmas distros rodando dentro de proot (proot-distro): lá o script roda como root,
+# sem sudo, paru, Kitty nem fontes (a fonte é a do próprio Termux).
 #
 # Distros de desktop: rode como root (ou com sudo). O script
 #   1. instala os pacotes do sistema;
@@ -9,8 +10,12 @@
 #      e troca o shell do root para zsh;
 #   3. dá sudo a ele e pede a senha dele;
 #   4. executa o setup tradicional (paru, oh-my-zsh, p10k, dotfiles, Kitty, fontes) COMO esse usuário.
-# Termux e Arch Linux ARM em proot: não criam usuário; rodam o setup tradicional direto
-# (Termux como usuário normal; proot como root, onde o script detecta o ambiente).
+# Distros em proot: rode como root. O script
+#   1. ajusta o pacman (só se a distro usar pacman) e instala os pacotes do sistema;
+#   2. cria o usuário "gustavo" (home /home/gustavo, shell zsh, grupos audio/video) SEM sudo
+#      (o setuid não funciona no proot; a administração fica com o root) e troca o shell do root para zsh;
+#   3. aplica os dotfiles de "Distro Proot" no root e executa o setup COMO esse usuário (via su).
+# Termux: não cria usuário; roda o setup tradicional direto, como usuário normal.
 #
 # Use --dry-run para ver o que seria feito sem alterar nada.
 # Pode ser executado várias vezes sem quebrar nada.
@@ -24,10 +29,13 @@ REPO_DIR_USER="${REPO_DIR:-}"   # guarda se o REPO_DIR foi escolhido pelo usuár
 REPO_URL="${REPO_URL:-https://github.com/V0LtagE1z/Minhas-Paradas.git}"
 REPO_DIR="${REPO_DIR:-$HOME/Minhas-Paradas}"
 
-# Usuário criado nas distros de desktop.
+# Usuário criado nas distros de desktop e nas distros em proot.
+# ATENÇÃO: o "Distro Proot/.zshrc" tem "gustavo" fixo (o root repassa a sessão com "su - gustavo").
+# Com NEW_USER diferente de gustavo esse repasse falha e o root continua no próprio shell.
+# Se um dia quiser usar outro nome, troque o "su - gustavo" nesse .zshrc.
 NEW_USER="${NEW_USER:-gustavo}"
 NEW_HOME="/home/$NEW_USER"
-NEW_GROUPS=(wheel audio video)
+NEW_GROUPS=(wheel audio video)   # no proot vira (audio video): sem sudo, o wheel não serve para nada
 
 # Pacotes (o nome é igual nos 4 gerenciadores). Adicione os outros aqui.
 PACKAGES=(zsh git curl fastfetch micro fzf zoxide)
@@ -39,14 +47,17 @@ DESKTOP_PACKAGES=(kitty fontconfig)
 # Estrutura do repo: cada ambiente tem a sua subpasta com os próprios dotfiles.
 DIR_TERMUX="Termux"
 DIR_DISTRO="Distro Normal"
+DIR_PROOT="Distro Proot"
 DIR_KITTY="Kitty"
 
 # Arquivos de cada subpasta que serão copiados para o $HOME.
 DOTFILES_TERMUX=(.zshrc .p10k.zsh)
 DOTFILES_DISTRO=(.zshrc .p10k.zsh .p10k-ascii.zsh)
+DOTFILES_PROOT=(.zshrc .p10k.zsh)
 
-# Caminhos que podem ser sobrescritos por variável de ambiente (útil para testar).
+# Caminhos/valores que podem ser sobrescritos por variável de ambiente (útil para testar).
 OS_RELEASE_FILE="${OS_RELEASE_FILE:-}"
+KERNEL_RELEASE="${KERNEL_RELEASE:-}"
 ARCH_RELEASE_FILE="${ARCH_RELEASE_FILE:-/etc/arch-release}"
 PROC_STATUS_FILE="${PROC_STATUS_FILE:-/proc/self/status}"
 PACMAN_CONF="${PACMAN_CONF:-/etc/pacman.conf}"
@@ -106,7 +117,8 @@ zsh_shell_path() {
 PM=""
 SUDO="sudo"
 FAILED=()
-ALARM_PROOT=0   # 1 = Arch Linux ARM rodando dentro de um proot (ex.: proot-distro no Termux)
+PROOT=0         # 1 = rodando dentro de um proot (ex.: proot-distro no Termux), qualquer distro
+IS_ALARM=0      # 1 = Arch Linux ARM (só relevante junto com PROOT=1, para o keyring)
 USER_PHASE=0    # 1 = chamado pelo próprio script, já como o novo usuário (interno)
 SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]:-$0}" 2>/dev/null || true)
 
@@ -125,7 +137,8 @@ Uso: bash setup.sh [--dry-run]
   --dry-run, -n   mostra o que seria feito (linhas [dry] e [sim]) sem alterar nada
   --help, -h      mostra esta ajuda
 
-Variáveis úteis: NEW_USER (padrão: gustavo), REPO_URL, REPO_DIR, FORCE_ALARM_PROOT=1.
+Variáveis úteis: NEW_USER (padrão: gustavo), REPO_URL, REPO_DIR,
+                 FORCE_PROOT=1 (força o modo proot se a detecção falhar).
 EOF
 }
 
@@ -141,12 +154,16 @@ parse_args() {
   done
 }
 
-# Arch Linux ARM dentro de proot: é o único caso em que rodar como root é permitido
-# sem criar usuário. FORCE_ALARM_PROOT=1 força o modo caso a detecção falhe.
+# Detecta se está dentro de um proot (qualquer distro) e se a distro é o Arch Linux ARM.
+# Critérios do proot, nesta ordem:
+#   1. o nome do kernel traz "proot" (o proot-distro devolve algo como 6.17.0-PRoot-Distro
+#      em "uname -r"; é o que aparece no fastfetch). Vale para qualquer distro;
+#   2. Arch Linux ARM + processo rastreado por ptrace (TracerPid != 0). Só para o ALARM de
+#      propósito: fora do proot um strace/gdb também dá TracerPid != 0.
+# FORCE_PROOT=1 força o modo caso a detecção falhe (FORCE_ALARM_PROOT=1 também força, e marca ALARM).
 detect_env() {
-  if [[ ${FORCE_ALARM_PROOT:-0} == 1 ]]; then ALARM_PROOT=1; return 0; fi
+  local tracer arch f kernel
 
-  local is_alarm=0 tracer arch f
   # Algumas imagens (ex.: proot-distro do ALARM) não têm /etc/os-release; o arquivo
   # canônico é /usr/lib/os-release, então tentamos os dois.
   if [[ -z $OS_RELEASE_FILE ]]; then
@@ -156,31 +173,42 @@ detect_env() {
   fi
   if [[ -n $OS_RELEASE_FILE ]] \
      && grep -qiE '^(ID="?archarm"?|NAME="?Arch Linux ARM)' "$OS_RELEASE_FILE" 2>/dev/null; then
-    is_alarm=1
+    IS_ALARM=1
   fi
   # Segundo critério: Arch (tem /etc/arch-release) em CPU ARM só pode ser o ALARM,
   # já que o Arch oficial não tem build aarch64.
   arch=${UNAME_M:-$(uname -m 2>/dev/null || true)}
-  if ((! is_alarm)) && [[ -e $ARCH_RELEASE_FILE ]] && [[ $arch == aarch64 || $arch == arm* ]]; then
-    is_alarm=1
+  if ((! IS_ALARM)) && [[ -e $ARCH_RELEASE_FILE ]] && [[ $arch == aarch64 || $arch == arm* ]]; then
+    IS_ALARM=1
   fi
+
+  if [[ ${FORCE_ALARM_PROOT:-0} == 1 ]]; then IS_ALARM=1; PROOT=1; return 0; fi
+  if [[ ${FORCE_PROOT:-0} == 1 ]]; then PROOT=1; return 0; fi
+
+  kernel=${KERNEL_RELEASE:-$(uname -r 2>/dev/null || true)}
+  if [[ ${kernel,,} == *proot* ]]; then PROOT=1; return 0; fi
+
   # No proot cada processo é rastreado (ptrace) pelo próprio proot: TracerPid != 0.
   tracer=$(awk '/^TracerPid:/ {print $2}' "$PROC_STATUS_FILE" 2>/dev/null || true)
-  if ((is_alarm)) && [[ -n $tracer && $tracer != 0 ]]; then
-    ALARM_PROOT=1
+  if ((IS_ALARM)) && [[ -n $tracer && $tracer != 0 ]]; then
+    PROOT=1
   fi
 }
 
 # Ambiente gráfico de verdade? (distro de desktop; não Termux e não proot)
-is_desktop() { [[ $PM != pkg && $ALARM_PROOT != 1 ]]; }
+is_desktop() { [[ $PM != pkg && $PROOT != 1 ]]; }
 
 detect_pm() {
-  # O ALARM/proot vem antes de tudo: variáveis do Termux podem vazar para dentro do proot.
-  if ((ALARM_PROOT)); then
+  # Dentro do proot as variáveis do Termux podem vazar: o proot decide antes do Termux.
+  if ((PROOT)); then
+    if ((IS_ALARM)); then log "Modo proot detectado (Arch Linux ARM)"
+    else log "Modo proot detectado"; fi
+  fi
+
+  if ((PROOT && IS_ALARM)); then
     PM=pacman
-    log "Modo Arch Linux ARM (proot) detectado"
   # Termux precisa ser checado antes do apt: ele também tem apt-get.
-  elif [[ -n "${TERMUX_VERSION:-}" || "${PREFIX:-}" == *com.termux* ]]; then
+  elif ((! PROOT)) && [[ -n "${TERMUX_VERSION:-}" || "${PREFIX:-}" == *com.termux* ]]; then
     PM=pkg; SUDO=""
   elif command -v apt-get >/dev/null; then PM=apt
   elif command -v dnf >/dev/null;     then PM=dnf
@@ -188,8 +216,8 @@ detect_pm() {
   else die "Gerenciador de pacotes não suportado (emerge não está incluído)."
   fi
 
-  # Root não precisa de sudo.
-  if [[ $EUID -eq 0 ]]; then SUDO=""; fi
+  # Root não precisa de sudo; no proot o sudo não é usado (setuid não funciona lá).
+  if [[ $EUID -eq 0 ]] || ((PROOT)); then SUDO=""; fi
   if [[ -n $SUDO ]] && ! command -v sudo >/dev/null; then
     if ((DRY_RUN)); then warn "sudo não encontrado (na simulação ele seria instalado)"
     else die "sudo não encontrado. Rode este script como root (su -)."
@@ -240,7 +268,7 @@ install_desktop_packages() {
   done
 }
 
-# ─── Arch Linux ARM em proot ──────────────────────────────────────────────────
+# ─── pacman em proot (Arch Linux ARM e afins) ─────────────────────────────────
 # No proot o kernel do Android não oferece Landlock/seccomp nem troca de usuário
 # real, então o sandbox de download do pacman 7+ falha, e o CheckSpace não
 # consegue descobrir os pontos de montagem.
@@ -299,9 +327,11 @@ patch_pacman_conf() {
 
 init_keyring() {
   if [[ -s /etc/pacman.d/gnupg/trustdb.gpg ]]; then return 0; fi
+  local keyring=archlinux
+  ((IS_ALARM)) && keyring=archlinuxarm
   log "Inicializando o chaveiro do pacman (pode demorar no proot)..."
   run $SUDO pacman-key --init || warn "pacman-key --init falhou"
-  run $SUDO pacman-key --populate archlinuxarm || warn "pacman-key --populate falhou"
+  run $SUDO pacman-key --populate "$keyring" || warn "pacman-key --populate falhou"
 }
 
 gen_locales() {  # o .zshrc usa pt_BR.UTF-8 e en_US.UTF-8; rootfs mínimo costuma ter só uma
@@ -320,8 +350,9 @@ gen_locales() {  # o .zshrc usa pt_BR.UTF-8 e en_US.UTF-8; rootfs mínimo costum
   if ((changed)); then run $SUDO locale-gen && log "locales pt_BR e en_US geradas" || warn "locale-gen falhou"; fi
 }
 
-prepare_alarm_proot() {
-  ((ALARM_PROOT)) || return 0
+prepare_proot_pacman() {
+  # Só para distros com pacman dentro de proot (Arch Linux ARM e afins).
+  ((PROOT)) && [[ $PM == pacman ]] || return 0
   patch_pacman_conf
   init_keyring
   # Rootfs de ARM costuma ser antigo: -Sy sem -u causaria atualização parcial.
@@ -329,7 +360,6 @@ prepare_alarm_proot() {
   run $SUDO pacman -Syu --noconfirm || warn "pacman -Syu falhou; os pacotes abaixo podem falhar"
   # O -Syu pode ter trazido um pacman mais novo, com outras opções de sandbox.
   patch_pacman_conf
-  gen_locales
 }
 
 # ─── Fase 1 (root, só desktop): usuário, grupos, shell, sudo, senha ───────────
@@ -387,13 +417,15 @@ create_user() {
 
   if id -u "$NEW_USER" >/dev/null 2>&1; then
     log "usuário $NEW_USER já existe; ajustando grupos e shell"
-    run usermod -aG "$csv" "$NEW_USER"
+    if [[ -n $csv ]]; then run usermod -aG "$csv" "$NEW_USER"; fi
     run usermod -s "$zsh_bin" "$NEW_USER"
     local cur_home; cur_home=$(getent passwd "$NEW_USER" | cut -d: -f6)
     [[ $cur_home == "$NEW_HOME" ]] || warn "home atual de $NEW_USER é $cur_home (esperado $NEW_HOME); não movi nada"
   else
-    run useradd -m -d "$NEW_HOME" -s "$zsh_bin" -G "$csv" "$NEW_USER"
-    log "usuário criado: $NEW_USER (home $NEW_HOME, shell $zsh_bin, grupos $csv)"
+    local -a uargs=(-m -d "$NEW_HOME" -s "$zsh_bin")
+    if [[ -n $csv ]]; then uargs+=(-G "$csv"); fi
+    run useradd "${uargs[@]}" "$NEW_USER"
+    log "usuário criado: $NEW_USER (home $NEW_HOME, shell $zsh_bin, grupos ${csv:-nenhum})"
   fi
 }
 
@@ -490,9 +522,51 @@ system_phase() {
   run_user_phase
 }
 
+# ─── Proot (qualquer distro): como root, sem sudo ─────────────────────────────
+# O setuid não funciona no proot, então o NEW_USER não recebe sudo (a administração
+# fica com o root) e o setup dele roda com "su", que o root pode usar sem senha.
+run_user_phase_proot() {
+  if ((DRY_RUN)); then
+    log "Fase do usuário $NEW_USER (simulada, home $NEW_HOME, via su):"
+    (
+      HOME=$NEW_HOME
+      [[ -n $REPO_DIR_USER ]] || REPO_DIR="$HOME/Minhas-Paradas"
+      run_user_steps
+    )
+    return 0
+  fi
+
+  [[ -f $SCRIPT_PATH ]] || die "Não achei o arquivo do script. Salve-o em disco e rode: bash setup.sh"
+  # Cópia legível pelo novo usuário (o original pode estar em /root).
+  local tmp; tmp=$(mktemp)
+  CLEANUP_FILES+=("$tmp")
+  cp -- "$SCRIPT_PATH" "$tmp"
+  chmod 755 "$tmp"
+
+  log "Executando o setup como $NEW_USER (su)"
+  # -s /bin/bash: o shell de login dele é o zsh, que interpretaria o comando de outro jeito.
+  su -l -s /bin/bash "$NEW_USER" -c \
+    "cd /tmp && env REPO_URL=$(printf '%q' "$REPO_URL") FORCE_PROOT=1 FORCE_ALARM_PROOT=${FORCE_ALARM_PROOT:-0} bash $(printf '%q' "$tmp") --user-phase" \
+    || warn "a fase do usuário terminou com erro; rode de novo para tentar completar"
+  cleanup
+}
+
+proot_phase() {
+  prepare_proot_pacman
+  pm_update
+  install_packages
+  gen_locales
+  create_user
+  set_root_shell
+  set_password
+  # Root: dotfiles de "Distro Proot" (o .zshrc dele repassa a sessão para o NEW_USER).
+  run_user_steps
+  run_user_phase_proot
+}
+
 # ─── Setup tradicional (roda como o próprio usuário, ou como root no proot) ───
 install_paru() {
-  if ((ALARM_PROOT)); then log "ALARM/proot: paru não é necessário, pulando"; return 0; fi
+  if ((PROOT)); then log "proot: paru não é necessário, pulando"; return 0; fi
   [[ $PM == pacman ]] || return 0
   if command -v paru >/dev/null; then log "paru já instalado"; return 0; fi
 
@@ -566,11 +640,13 @@ backup_and_copy() {  # origem destino
 deploy_dotfiles() {
   clone_or_update "$REPO_URL" "$REPO_DIR"
 
-  # Termux e distro normal têm dotfiles diferentes, cada um na sua subpasta.
+  # Termux, proot e distro normal têm dotfiles diferentes, cada um na sua subpasta.
   local sub f
   local -a files
   if [[ $PM == pkg ]]; then
     sub=$DIR_TERMUX;  files=("${DOTFILES_TERMUX[@]}")
+  elif ((PROOT)); then
+    sub=$DIR_PROOT;   files=("${DOTFILES_PROOT[@]}")
   else
     sub=$DIR_DISTRO;  files=("${DOTFILES_DISTRO[@]}")
   fi
@@ -602,8 +678,9 @@ ensure_editor() {
 }
 
 set_default_shell() {
-  # Distros de desktop: o root já definiu o shell do novo usuário com usermod.
-  is_desktop && return 0
+  # Distros de desktop e proot: o shell do novo usuário e o do root já foram definidos
+  # com usermod (o chsh pede PAM/senha e não funciona bem no proot).
+  if is_desktop || ((PROOT)); then return 0; fi
   local zsh_bin
   zsh_bin=$(zsh_shell_path) || { warn "zsh não encontrado, pulando chsh"; return 0; }
   if [[ ${SHELL:-} == "$zsh_bin" ]]; then return 0; fi
@@ -717,15 +794,22 @@ main() {
   detect_env
   detect_pm
 
-  # Termux e Arch Linux ARM em proot: usuário único, sem criar conta.
-  if ! is_desktop; then
-    if [[ $EUID -eq 0 && $ALARM_PROOT -ne 1 ]]; then
-      die "Rode como usuário normal; o script usa sudo quando precisa. (Root só é aceito no Arch Linux ARM dentro de proot.)"
-    fi
-    prepare_alarm_proot
+  # No proot o NEW_USER não tem sudo, então o grupo wheel não serve para nada.
+  if ((PROOT)); then NEW_GROUPS=(audio video); fi
+
+  # Fase 2 (interna): chamada pelo próprio script, já como o novo usuário (desktop ou proot).
+  if ((USER_PHASE)); then
+    [[ $EUID -ne 0 ]] || die "A fase do usuário não pode rodar como root."
+    run_user_steps
+    hint_p10k
+    return 0
+  fi
+
+  # Termux: usuário único, sem criar conta.
+  if [[ $PM == pkg ]]; then
+    [[ $EUID -ne 0 ]] || die "Rode como usuário normal no Termux; root não é aceito."
     pm_update
     install_packages
-    install_desktop_packages
     run_user_steps
     echo
     print_failed
@@ -734,11 +818,20 @@ main() {
     return 0
   fi
 
-  # Distros de desktop, fase 2: chamada pelo próprio script, já como o novo usuário.
-  if ((USER_PHASE)); then
-    [[ $EUID -ne 0 ]] || die "A fase do usuário não pode rodar como root."
-    run_user_steps
-    hint_p10k
+  # Proot (qualquer distro): roda como root, cria o NEW_USER sem sudo e aplica o setup nos dois.
+  if ((PROOT)); then
+    if ((! DRY_RUN)); then
+      [[ $EUID -eq 0 ]] || die "No proot, rode como root (ex.: proot-distro login <distro>); o script cria o usuário $NEW_USER."
+      [[ -f $SCRIPT_PATH ]] || die "Salve o script em disco e rode: bash setup.sh"
+    fi
+    proot_phase
+    echo
+    print_failed
+    if ((DRY_RUN)); then
+      log "Simulação concluída: nada foi alterado."
+    else
+      log "Pronto. Abra um novo shell do root (ele pergunta se quer atualizar e entra como $NEW_USER) ou rode: su - $NEW_USER"
+    fi
     return 0
   fi
 
