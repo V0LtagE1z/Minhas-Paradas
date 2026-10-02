@@ -61,6 +61,7 @@ KERNEL_RELEASE="${KERNEL_RELEASE:-}"
 ARCH_RELEASE_FILE="${ARCH_RELEASE_FILE:-/etc/arch-release}"
 PROC_STATUS_FILE="${PROC_STATUS_FILE:-/proc/self/status}"
 PACMAN_CONF="${PACMAN_CONF:-/etc/pacman.conf}"
+ROOT_PREFIX="${ROOT_PREFIX:-}"   # só para testes: prefixo dos /etc e /usr/lib lidos por detect_zshrc_family
 
 # ─── Utilidades ───────────────────────────────────────────────────────────────
 DRY_RUN="${DRY_RUN:-0}"   # 1 = só mostra o que seria feito (--dry-run)
@@ -551,7 +552,74 @@ run_user_phase_proot() {
   cleanup
 }
 
+# Simula a detecção do "Distro Proot/.zshrc" (função _detect_update_family): qual
+# gerenciador o .zshrc do root vai usar quando você aceitar "atualizar o sistema".
+# MANTENHA EM SINCRONIA com aquele .zshrc (mesma ordem: os-release → marcadores → PATH).
+# Preenche UPDATE_FAMILY e UPDATE_FAMILY_SRC; retorna 1 se não reconhecer a distro.
+UPDATE_FAMILY=""
+UPDATE_FAMILY_SRC=""
+detect_zshrc_family() {
+  local f key val id="" id_like="" src="" w m pm
+  UPDATE_FAMILY=""; UPDATE_FAMILY_SRC=""
+
+  # os-release: /etc é o usual; /usr/lib é o canônico (o ALARM de proot pode só ter este).
+  for f in "$ROOT_PREFIX/etc/os-release" "$ROOT_PREFIX/usr/lib/os-release"; do
+    [[ -r $f ]] || continue
+    while IFS='=' read -r key val || [[ -n $key ]]; do
+      val=${val//\"/}
+      val=${val//\'/}
+      case $key in
+        ID)      id=$val ;;
+        ID_LIKE) id_like=$val ;;
+      esac
+    done < "$f"
+    if [[ -n $id || -n $id_like ]]; then src=$f; break; fi
+  done
+
+  # ${id,,}: minúsculas; sem aspas de propósito, para separar o ID_LIKE em palavras.
+  for w in ${id,,} ${id_like,,}; do
+    case $w in
+      arch|archarm|archlinux32|manjaro|manjaro-arm|endeavouros|artix|parabola) UPDATE_FAMILY=pacman ;;
+      ubuntu|debian|raspbian|kali|linuxmint)                                   UPDATE_FAMILY=apt ;;
+      fedora|rhel|centos|rocky|almalinux)                                      UPDATE_FAMILY=dnf ;;
+      opensuse*|suse|sles)                                                     UPDATE_FAMILY=zypper ;;
+      alpine)                                                                  UPDATE_FAMILY=apk ;;
+      *) continue ;;
+    esac
+    UPDATE_FAMILY_SRC="ID/ID_LIKE \"$w\" em ${src#"$ROOT_PREFIX"}"
+    return 0
+  done
+
+  for m in arch-release:pacman debian_version:apt fedora-release:dnf redhat-release:dnf \
+           SuSE-release:zypper SUSE-brand:zypper alpine-release:apk; do
+    if [[ -e $ROOT_PREFIX/etc/${m%%:*} ]]; then
+      UPDATE_FAMILY=${m##*:}
+      UPDATE_FAMILY_SRC="arquivo /etc/${m%%:*} (sem ID reconhecível no os-release)"
+      return 0
+    fi
+  done
+
+  for pm in pacman:pacman apt-get:apt dnf:dnf zypper:zypper apk:apk; do
+    if command -v "${pm%%:*}" >/dev/null 2>&1; then
+      UPDATE_FAMILY=${pm##*:}
+      UPDATE_FAMILY_SRC="comando ${pm%%:*} no PATH (sem os-release nem marcadores)"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+report_zshrc_family() {
+  if detect_zshrc_family; then
+    log "o .zshrc do root vai atualizar o sistema via '$UPDATE_FAMILY' (detectado por: $UPDATE_FAMILY_SRC)"
+  else
+    warn "o .zshrc do root NÃO reconheceria esta distro (sem os-release, marcadores nem gerenciador conhecido) e pularia a atualização"
+  fi
+}
+
 proot_phase() {
+  if ((DRY_RUN)); then report_zshrc_family; fi
   prepare_proot_pacman
   pm_update
   install_packages

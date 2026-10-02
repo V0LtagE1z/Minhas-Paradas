@@ -15,67 +15,94 @@ if [[ -n "$TERMUX_VERSION" || "$PREFIX" == *com.termux* ]]; then
 
 elif [[ "$EUID" -eq 0 && -o interactive ]]; then
   # Linux como root: pergunta, detecta a distro, atualiza, e passa a vez para o usuário "gustavo"
-  [[ -r /etc/os-release ]] && source /etc/os-release
+
+  # Descobre a "família" da distro (pacman/apt/dnf/zypper/apk) SEM depender só do
+  # /etc/os-release: imagens proot como o Arch Linux ARM (ALARM) podem não ter esse
+  # arquivo, só o canônico /usr/lib/os-release (ou nenhum dos dois). Ordem:
+  #   1. ID e depois ID_LIKE do os-release (/etc, depois /usr/lib)
+  #   2. arquivos-marcadores (/etc/arch-release, /etc/debian_version etc.)
+  #   3. gerenciador de pacotes presente no PATH
+  # Lê o arquivo linha a linha em vez de usar `source`, para não poluir o shell
+  # com variáveis como NAME/VERSION/ID. Imprime a família; retorna 1 se não achar.
+  # O setup.sh tem uma cópia em bash (detect_zshrc_family, usada no --dry-run):
+  # se mudar a lógica aqui, mude lá também.
+  _detect_update_family() {
+    local f key val id="" id_like="" w pm
+
+    for f in /etc/os-release /usr/lib/os-release; do
+      [[ -r $f ]] || continue
+      while IFS='=' read -r key val || [[ -n $key ]]; do
+        val=${val//\"/}
+        val=${val//\'/}
+        case $key in
+          ID)      id=$val ;;
+          ID_LIKE) id_like=$val ;;
+        esac
+      done < "$f"
+      [[ -n $id || -n $id_like ]] && break
+    done
+
+    id=${(L)id}
+    id_like=${(L)id_like}
+    for w in ${=id} ${=id_like}; do
+      case $w in
+        arch|archarm|archlinux32|manjaro|manjaro-arm|endeavouros|artix|parabola)
+          print pacman; return 0 ;;
+        ubuntu|debian|raspbian|kali|linuxmint)
+          print apt; return 0 ;;
+        fedora|rhel|centos|rocky|almalinux)
+          print dnf; return 0 ;;
+        opensuse*|suse|sles)
+          print zypper; return 0 ;;
+        alpine)
+          print apk; return 0 ;;
+      esac
+    done
+
+    [[ -e /etc/arch-release ]]                           && { print pacman; return 0 }
+    [[ -e /etc/debian_version ]]                         && { print apt;    return 0 }
+    [[ -e /etc/fedora-release || -e /etc/redhat-release ]] && { print dnf;   return 0 }
+    [[ -e /etc/SuSE-release || -e /etc/SUSE-brand ]]     && { print zypper; return 0 }
+    [[ -e /etc/alpine-release ]]                         && { print apk;    return 0 }
+
+    for pm in pacman:pacman apt-get:apt dnf:dnf zypper:zypper apk:apk; do
+      (( $+commands[${pm%%:*}] )) && { print ${pm##*:}; return 0 }
+    done
+
+    return 1
+  }
 
   read -q "REPLY?Deseja atualizar o sistema agora? [y/N] "
   echo
   if [[ "$REPLY" == [Yy] ]]; then
-    case "$ID" in
-      arch|archarm|archlinux32|manjaro|manjaro-arm|endeavouros)
+    case "$(_detect_update_family)" in
+      pacman)
         pacman -Syu
         ;;
-      ubuntu|debian)
+      apt)
         apt update && apt upgrade -y
         apt autoclean
         apt autoremove -y
         ;;
-      fedora)
+      dnf)
         dnf upgrade --refresh -y
         dnf autoremove -y
         ;;
-      opensuse*|sles)
+      zypper)
         zypper refresh
         zypper update -y
         zypper clean
         ;;
-      alpine)
+      apk)
         apk update
         apk upgrade
         ;;
       *)
-        # $ID não bateu com nada acima — tenta pelo $ID_LIKE, que toda
-        # distro derivada declara apontando pra "família" dela (ex.:
-        # Parabola, Artix etc. têm ID_LIKE=arch mesmo com um ID= próprio
-        # que a gente não previu aqui).
-        case " $ID_LIKE " in
-          *" arch "*)
-            pacman -Syu
-            ;;
-          *" debian "*|*" ubuntu "*)
-            apt update && apt upgrade -y
-            apt autoclean
-            apt autoremove -y
-            ;;
-          *" fedora "*|*" rhel "*)
-            dnf upgrade --refresh -y
-            dnf autoremove -y
-            ;;
-          *" suse "*|*" opensuse "*)
-            zypper refresh
-            zypper update -y
-            zypper clean
-            ;;
-          *" alpine "*)
-            apk update
-            apk upgrade
-            ;;
-          *)
-            echo "Distribuição não reconhecida ($ID) — pulando atualização."
-            ;;
-        esac
+        echo "Distribuição não reconhecida (sem os-release, marcadores ou gerenciador de pacotes conhecido) — pulando atualização."
         ;;
     esac
   fi
+  unfunction _detect_update_family
 
   clear
   fastfetch

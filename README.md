@@ -85,6 +85,8 @@ Se a detecção falhar, force com `FORCE_PROOT=1 bash setup.sh`. Rode como root 
 
 Depois do setup, o `.zshrc` do root pergunta se você quer atualizar o sistema e passa a sessão para o `gustavo` com `su - gustavo`. Se a troca falhar, você continua no root.
 
+Para escolher o gerenciador de pacotes dessa atualização, o `.zshrc` não depende só do `/etc/os-release` (algumas imagens, como o ALARM do proot-distro, não têm esse arquivo). Ele tenta, em ordem: `ID` e depois `ID_LIKE` de `/etc/os-release` e de `/usr/lib/os-release`; arquivos-marcadores como `/etc/arch-release` e `/etc/debian_version`; e, por último, o gerenciador que existir no `PATH` (`pacman`, `apt-get`, `dnf`, `zypper`, `apk`). No `--dry-run` em modo proot, o script informa qual gerenciador o `.zshrc` vai usar e por qual critério, ou avisa se ele não reconheceria a distro.
+
 O nome `gustavo` está fixo nesse `.zshrc` (no `su - gustavo`). Com `NEW_USER=outro` o usuário é criado, mas a troca automática não acontece até você ajustar essa linha.
 
 No Termux, rodar como root continua bloqueado de propósito.
