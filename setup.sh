@@ -5,6 +5,7 @@
 # sem sudo, paru, Kitty nem fontes (a fonte é a do próprio Termux).
 #
 # Distros de desktop: rode como root (ou com sudo). O script
+#   0. só no Arch puro: ranqueia os mirrors com o rate-mirrors e atualiza o sistema (pacman -Syyu);
 #   1. instala os pacotes do sistema;
 #   2. cria o usuário "gustavo" (home /home/gustavo, shell zsh, grupos wheel/audio/video)
 #      e troca o shell do root para zsh;
@@ -36,6 +37,12 @@ REPO_DIR="${REPO_DIR:-$HOME/Minhas-Paradas}"
 NEW_USER="${NEW_USER:-gustavo}"
 NEW_HOME="/home/$NEW_USER"
 NEW_GROUPS=(wheel audio video)   # no proot vira (audio video): sem sudo, o wheel não serve para nada
+
+# Arch puro (desktop): ranqueia os mirrors com o rate-mirrors antes de instalar qualquer coisa.
+# SKIP_MIRRORS=1 pula essa etapa; FORCE_MIRRORS=1 ranqueia de novo mesmo se já foi feito.
+SKIP_MIRRORS="${SKIP_MIRRORS:-0}"
+FORCE_MIRRORS="${FORCE_MIRRORS:-0}"
+MIRRORLIST_FILE="${MIRRORLIST_FILE:-/etc/pacman.d/mirrorlist}"
 
 # Pacotes (o nome é igual nos 4 gerenciadores). Adicione os outros aqui.
 PACKAGES=(zsh git curl fastfetch micro fzf zoxide)
@@ -139,7 +146,9 @@ Uso: bash setup.sh [--dry-run]
   --help, -h      mostra esta ajuda
 
 Variáveis úteis: NEW_USER (padrão: gustavo), REPO_URL, REPO_DIR,
-                 FORCE_PROOT=1 (força o modo proot se a detecção falhar).
+                 FORCE_PROOT=1 (força o modo proot se a detecção falhar),
+                 SKIP_MIRRORS=1 (não ranquear os mirrors no Arch),
+                 FORCE_MIRRORS=1 (ranquear de novo mesmo se já foi feito).
 EOF
 }
 
@@ -267,6 +276,64 @@ install_desktop_packages() {
       FAILED+=("$p")
     fi
   done
+}
+
+# ─── Mirrors no Arch puro (desktop) ───────────────────────────────────────────
+# Só no Arch puro (ID=arch). CachyOS, EndeavourOS, Arch ARM etc. têm mirrorlists próprias
+# e não devem ser sobrescritas com a lista do Arch. O rate-mirrors está no repo oficial [extra].
+optimize_mirrors() {
+  [[ $PM == pacman ]] && is_desktop || return 0
+  if [[ $SKIP_MIRRORS == 1 ]]; then log "mirrors: etapa pulada (SKIP_MIRRORS=1)"; return 0; fi
+  if ! grep -qE '^ID="?arch"?$' "${OS_RELEASE_FILE:-/etc/os-release}" 2>/dev/null; then
+    log "mirrors: não é Arch puro, mantendo a mirrorlist atual"; return 0
+  fi
+  if [[ $FORCE_MIRRORS != 1 ]] && grep -q '^# ARGS: rate-mirrors' "$MIRRORLIST_FILE" 2>/dev/null; then
+    log "mirrors: a mirrorlist já foi gerada pelo rate-mirrors (FORCE_MIRRORS=1 para refazer)"; return 0
+  fi
+
+  if ((DRY_RUN)); then
+    log "Ranquearia os mirrors com o rate-mirrors e atualizaria o sistema:"
+    run $SUDO pacman -S --needed --noconfirm rate-mirrors
+    run rate-mirrors --allow-root --protocol https --save=/tmp/mirrorlist.novo arch --max-delay=21600
+    run $SUDO cp -a "$MIRRORLIST_FILE" "$MIRRORLIST_FILE.bak"
+    run $SUDO install -m 644 /tmp/mirrorlist.novo "$MIRRORLIST_FILE"
+    # -yy só se justifica logo após trocar de mirror, e SEMPRE junto com -u (senão é update parcial).
+    run $SUDO pacman -Syyu --noconfirm
+    return 0
+  fi
+
+  if ! command -v rate-mirrors >/dev/null; then
+    if ! $SUDO pacman -S --needed --noconfirm rate-mirrors; then
+      # Banco de dados antigo (404): atualiza o sistema inteiro, nunca só o banco (-Sy isolado = update parcial).
+      warn "falha ao instalar o rate-mirrors; tentando com atualização completa do sistema"
+      $SUDO pacman -Syu --noconfirm rate-mirrors \
+        || { warn "não consegui instalar o rate-mirrors; seguindo com os mirrors atuais"; return 0; }
+    fi
+  fi
+
+  log "Ranqueando os mirrors (pode levar 1-2 minutos)..."
+  local tmp; tmp=$(mktemp)
+  CLEANUP_FILES+=("$tmp")
+  # --allow-root: esta fase roda como root. Opções gerais vêm antes do "arch"; --max-delay é do subcomando.
+  if ! rate-mirrors --allow-root --protocol https --save="$tmp" arch --max-delay=21600 \
+     || ! grep -q '^Server' "$tmp"; then
+    warn "o rate-mirrors falhou; seguindo com os mirrors atuais"
+    return 0
+  fi
+
+  # Backup: .bak; se já existir, .bak.1, .bak.2... (nunca sobrescreve um backup antigo)
+  local bak="$MIRRORLIST_FILE.bak" n=0
+  while [[ -e $bak ]]; do n=$((n + 1)); bak="$MIRRORLIST_FILE.bak.$n"; done
+  $SUDO cp -a "$MIRRORLIST_FILE" "$bak"
+  $SUDO install -m 644 "$tmp" "$MIRRORLIST_FILE"
+  log "mirrorlist atualizada (backup: $bak)"
+
+  # Atualizar o banco sem atualizar os pacotes quebra o sistema; por isso -Syyu, nunca -Syy.
+  # Também garante que o paru seja compilado depois, contra a libalpm já atualizada.
+  log "Atualizando o sistema a partir dos novos mirrors (pacman -Syyu)..."
+  $SUDO pacman -Syyu --noconfirm \
+    || die "pacman -Syyu falhou. Rode 'pacman -Syu' manualmente até funcionar e execute o script de novo."
+  log "sistema atualizado (se o kernel mudou, reinicie no fim)"
 }
 
 # ─── pacman em proot (Arch Linux ARM e afins) ─────────────────────────────────
@@ -512,6 +579,7 @@ run_user_phase() {
 }
 
 system_phase() {
+  optimize_mirrors   # Arch puro: rate-mirrors + atualização completa, antes de qualquer outro pacote
   pm_update
   install_packages
   install_desktop_packages
@@ -633,28 +701,43 @@ proot_phase() {
 }
 
 # ─── Setup tradicional (roda como o próprio usuário, ou como root no proot) ───
+# O paru precisa não só existir, mas executar: um binário ligado a uma libalpm antiga
+# existe no PATH e morre com "libalpm.so.15: cannot open shared object file".
+paru_ok() { command -v paru >/dev/null && paru --version >/dev/null 2>&1; }
+
 install_paru() {
   if ((PROOT)); then log "proot: paru não é necessário, pulando"; return 0; fi
   [[ $PM == pacman ]] || return 0
-  if command -v paru >/dev/null; then log "paru já instalado"; return 0; fi
+  if paru_ok; then log "paru já instalado e funcionando"; return 0; fi
+  if command -v paru >/dev/null; then
+    warn "paru instalado mas quebrado (provável libalpm diferente da do pacman); recompilando"
+  fi
 
   if ((DRY_RUN)); then
     run $SUDO pacman -S --needed --noconfirm paru
-    log "(se o repositório não tiver o paru, compilaria o paru-bin do AUR com makepkg)"
+    log "(se o repositório não tiver o paru: removeria o paru-bin, se houver, e compilaria o paru do AUR com makepkg)"
     return 0
   fi
 
   # CachyOS e alguns repos já trazem o paru pronto.
-  if $SUDO pacman -S --needed --noconfirm paru 2>/dev/null; then
+  if $SUDO pacman -S --needed --noconfirm paru 2>/dev/null && paru_ok; then
     log "paru instalado via repositório"; return 0
   fi
 
-  log "Compilando paru-bin a partir do AUR..."
+  # O paru-bin é pré-compilado e fica para trás quando o pacman muda a versão da libalpm.
+  # Compilamos o paru do fonte e removemos o paru-bin antes (os dois conflitam).
+  if pacman -Qq paru-bin >/dev/null 2>&1; then
+    log "removendo o paru-bin (conflita com o paru e está quebrado)"
+    $SUDO pacman -Rn --noconfirm paru-bin
+  fi
+
+  log "Compilando o paru a partir do AUR (leva alguns minutos)..."
   $SUDO pacman -S --needed --noconfirm base-devel git
   local tmp; tmp=$(mktemp -d)
-  git clone --depth=1 https://aur.archlinux.org/paru-bin.git "$tmp/paru-bin"
-  (cd "$tmp/paru-bin" && makepkg -si --noconfirm)
+  git clone --depth=1 https://aur.archlinux.org/paru.git "$tmp/paru"
+  (cd "$tmp/paru" && makepkg -si --noconfirm)
   rm -rf "$tmp"
+  paru_ok || die "o paru foi compilado mas não executa; verifique com: ldd /usr/bin/paru"
   log "paru instalado"
 }
 

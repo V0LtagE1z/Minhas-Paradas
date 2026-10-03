@@ -95,10 +95,12 @@ No Termux, rodar como root continua bloqueado de propósito.
 
 Nas distros de desktop, as etapas 1 a 3 rodam como root; depois o script cria o usuário `gustavo` (seção acima) e as etapas 4 a 10 rodam como ele. No Termux tudo roda direto, sem criar usuário. No proot o fluxo é o da seção anterior (as etapas abaixo se aplicam, menos `paru`, Kitty e fontes).
 
+**Antes de tudo, só no Arch puro (`ID=arch`) de desktop:** instala o `rate-mirrors` (está no repositório oficial `extra`), ranqueia os mirrors, guarda a mirrorlist antiga em `/etc/pacman.d/mirrorlist.bak` (ou `.bak.1`, `.bak.2`...) e roda `pacman -Syyu`. É `-Syyu` e não só `-Syy`: atualizar o banco sem atualizar os pacotes é update parcial e quebra o sistema. CachyOS, EndeavourOS e Arch ARM mantêm a mirrorlist deles. `SKIP_MIRRORS=1` pula a etapa; `FORCE_MIRRORS=1` ranqueia de novo mesmo se a lista já veio do `rate-mirrors`.
+
 1. Detecta o gerenciador de pacotes: `pkg` (Termux), `apt`, `dnf` ou `pacman`.
 2. Instala `zsh git curl fastfetch micro fzf zoxide`. Um pacote indisponível não interrompe o script, só aparece na lista de falhas no final.
 3. **Só em distros:** instala `kitty` e `fontconfig`.
-4. No Arch/CachyOS, instala o `paru` (pelo repositório ou compilando o `paru-bin` do AUR).
+4. No Arch/CachyOS, instala o `paru` (pelo repositório ou compilando o `paru` do AUR). O `paru-bin` não é usado: ele é pré-compilado e quebra (`libalpm.so.15: cannot open shared object file`) quando o pacman sobe de versão. Se já houver um `paru` que não executa, o script remove o `paru-bin` e recompila.
 5. Clona o oh-my-zsh, o powerlevel10k (em `~/powerlevel10k`) e os plugins `zsh-autosuggestions`, `fast-syntax-highlighting` e `zsh-history-substring-search`.
 6. Copia os dotfiles para o `$HOME`, cada ambiente da sua pasta:
    - Termux: `Termux/.zshrc` e `Termux/.p10k.zsh`.
