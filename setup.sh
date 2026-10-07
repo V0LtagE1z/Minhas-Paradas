@@ -18,6 +18,11 @@
 #   3. aplica os dotfiles de "Distro Proot" no root e executa o setup COMO esse usuário (via su).
 # Termux: não cria usuário; roda o setup tradicional direto, como usuário normal.
 #
+# Distros de desktop, opcional: instala os temas Minecraft (GRUB: minegrub-world-sel-theme;
+# Plymouth: minecraft-plymouth-theme). Pergunta no começo; --temas-minecraft / --sem-temas-minecraft
+# respondem por você. Só funciona com GRUB; em Limine/systemd-boot só o Plymouth é instalado.
+# No fim, em qualquer ambiente, pergunta se você quer encerrar a sessão (fecha o shell que chamou o script).
+#
 # Use --dry-run para ver o que seria feito sem alterar nada.
 # Pode ser executado várias vezes sem quebrar nada.
 set -euo pipefail
@@ -69,6 +74,27 @@ ARCH_RELEASE_FILE="${ARCH_RELEASE_FILE:-/etc/arch-release}"
 PROC_STATUS_FILE="${PROC_STATUS_FILE:-/proc/self/status}"
 PACMAN_CONF="${PACMAN_CONF:-/etc/pacman.conf}"
 ROOT_PREFIX="${ROOT_PREFIX:-}"   # só para testes: prefixo dos /etc e /usr/lib lidos por detect_zshrc_family
+
+# Temas Minecraft (só distros de desktop):
+#   GRUB     -> Lxtharia/minegrub-world-sel-theme
+#   Plymouth -> nikp123/minecraft-plymouth-theme
+# MC_THEMES: ask (pergunta no começo; padrão), 1 (instala sem perguntar) ou 0 (pula).
+# Também: --temas-minecraft e --sem-temas-minecraft.
+MC_THEMES="${MC_THEMES:-ask}"
+MC_GRUB_REPO="${MC_GRUB_REPO:-https://github.com/Lxtharia/minegrub-world-sel-theme.git}"
+MC_PLYMOUTH_REPO="${MC_PLYMOUTH_REPO:-https://github.com/nikp123/minecraft-plymouth-theme.git}"
+BOOT_DIR="${BOOT_DIR:-/boot}"
+GRUB_DEFAULT_FILE="${GRUB_DEFAULT_FILE:-/etc/default/grub}"
+GRUB_D_DIR="${GRUB_D_DIR:-/etc/grub.d}"
+MKINITCPIO_CONF="${MKINITCPIO_CONF:-/etc/mkinitcpio.conf}"
+MKINITCPIO_CONF_D="${MKINITCPIO_CONF_D:-/etc/mkinitcpio.conf.d}"
+# Onde o install.sh do tema do Plymouth coloca as coisas (usado só pelo --reverter-temas).
+PLYMOUTH_THEMES_DIR="${PLYMOUTH_THEMES_DIR:-/usr/share/plymouth/themes}"
+MC_FONT_FILE="${MC_FONT_FILE:-/usr/share/fonts/OTF/Minecraft.otf}"
+MC_FONTCONF_FILE="${MC_FONTCONF_FILE:-/etc/fonts/conf.d/00-minecraft.conf}"
+DRACUT_CONF_D="${DRACUT_CONF_D:-/etc/dracut.conf.d}"
+INITRAMFS_HOOKS_DIR="${INITRAMFS_HOOKS_DIR:-/usr/share/initramfs-tools/hooks}"
+REVERT_MC=0   # 1 = --reverter-temas
 
 # ─── Utilidades ───────────────────────────────────────────────────────────────
 DRY_RUN="${DRY_RUN:-0}"   # 1 = só mostra o que seria feito (--dry-run)
@@ -131,10 +157,13 @@ USER_PHASE=0    # 1 = chamado pelo próprio script, já como o novo usuário (in
 SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]:-$0}" 2>/dev/null || true)
 
 CLEANUP_FILES=()
+CLEANUP_DIRS=()   # diretórios temporários (clones dos temas etc.)
 cleanup() {
   local f
   for f in ${CLEANUP_FILES[@]+"${CLEANUP_FILES[@]}"}; do rm -f -- "$f"; done
+  for f in ${CLEANUP_DIRS[@]+"${CLEANUP_DIRS[@]}"}; do rm -rf -- "$f"; done
   CLEANUP_FILES=()
+  CLEANUP_DIRS=()
 }
 trap cleanup EXIT
 
@@ -142,13 +171,19 @@ usage() {
   cat <<EOF
 Uso: bash setup.sh [--dry-run]
 
-  --dry-run, -n   mostra o que seria feito (linhas [dry] e [sim]) sem alterar nada
-  --help, -h      mostra esta ajuda
+  --dry-run, -n           mostra o que seria feito (linhas [dry] e [sim]) sem alterar nada
+  --temas-minecraft       instala os temas Minecraft (GRUB + Plymouth) sem perguntar (só desktop)
+  --sem-temas-minecraft   não instala e não pergunta pelos temas Minecraft
+  --reverter-temas        desfaz os temas Minecraft (GRUB + Plymouth) e sai; não faz mais nada
+  --help, -h              mostra esta ajuda
+
+No fim o script pergunta se você quer encerrar a sessão (fecha o shell que chamou o script).
 
 Variáveis úteis: NEW_USER (padrão: gustavo), REPO_URL, REPO_DIR,
                  FORCE_PROOT=1 (força o modo proot se a detecção falhar),
                  SKIP_MIRRORS=1 (não ranquear os mirrors no Arch),
-                 FORCE_MIRRORS=1 (ranquear de novo mesmo se já foi feito).
+                 FORCE_MIRRORS=1 (ranquear de novo mesmo se já foi feito),
+                 MC_THEMES=1|0 (o mesmo que --temas-minecraft / --sem-temas-minecraft).
 EOF
 }
 
@@ -158,6 +193,9 @@ parse_args() {
     case $a in
       --dry-run|-n) DRY_RUN=1 ;;
       --user-phase) USER_PHASE=1 ;;   # interno
+      --temas-minecraft)      MC_THEMES=1 ;;
+      --sem-temas-minecraft)  MC_THEMES=0 ;;
+      --reverter-temas)       REVERT_MC=1 ;;
       -h|--help)    usage; exit 0 ;;
       *)            die "Opção desconhecida: $a (veja: bash setup.sh --help)" ;;
     esac
@@ -589,6 +627,8 @@ system_phase() {
   configure_sudo
   set_password
   run_user_phase
+  # Por último: mexe no bootloader/initramfs e uma falha aqui não pode atrapalhar o setup principal.
+  minecraft_themes || warn "os temas Minecraft não foram concluídos"
 }
 
 # ─── Proot (qualquer distro): como root, sem sudo ─────────────────────────────
@@ -935,6 +975,407 @@ hint_p10k() {
   return 0
 }
 
+# ─── Perguntas (s/N) ──────────────────────────────────────────────────────────
+# Pergunta sim/não lendo do terminal (/dev/tty), mesmo com o stdin redirecionado.
+# Resposta vazia = padrão ($2: s ou n). Sem terminal, devolve o padrão sem perguntar.
+ask_yn() {  # pergunta [s|n]
+  local q=$1 def=${2:-n} ans="" hint="[s/N]"
+  [[ $def == s ]] && hint="[S/n]"
+  { : </dev/tty; } 2>/dev/null || { [[ $def == s ]]; return; }
+  printf '%s %s ' "$q" "$hint" >&2
+  { read -r ans </dev/tty; } 2>/dev/null || ans=""
+  case ${ans,,} in
+    s|sim|y|yes)  return 0 ;;
+    n|nao|não|no) return 1 ;;
+    *)            [[ $def == s ]] ;;
+  esac
+}
+
+# ─── Encerrar a sessão no fim ─────────────────────────────────────────────────
+# Um "exit" dentro do script só encerraria o próprio script: o shell que o chamou
+# continuaria aberto. Por isso a sessão é encerrada mandando SIGHUP para o shell
+# interativo que está acima do script (pulando sudo/su/env no meio do caminho).
+# Imprime o PID desse shell; retorna 1 se não achar um shell com segurança.
+find_parent_shell() {
+  local pid=$$ ppid comm args
+  while :; do
+    ppid=$(awk '/^PPid:/ {print $2}' "/proc/$pid/status" 2>/dev/null) || return 1
+    [[ $ppid =~ ^[0-9]+$ ]] && ((ppid > 1)) || return 1
+    comm=$(cat "/proc/$ppid/comm" 2>/dev/null) || return 1
+    case $comm in
+      sudo|su|doas|env|timeout) ;;   # intermediários: continua subindo
+      bash|zsh|sh|dash|ksh|fish)
+        args=$(tr '\0' ' ' < "/proc/$ppid/cmdline" 2>/dev/null) || args=""
+        # um shell que só está rodando este script (ex.: sh -c "bash setup.sh") não é a sessão
+        if [[ -z $SCRIPT_PATH || $args != *"${SCRIPT_PATH##*/}"* ]]; then
+          printf '%s\n' "$ppid"; return 0
+        fi ;;
+      *) return 1 ;;
+    esac
+    pid=$ppid
+  done
+}
+
+# $1 = mensagem de aviso, mostrada quando a pessoa NÃO quer encerrar a sessão
+# (ou quando não dá para perguntar/encerrar).
+finish_session() {
+  local msg=$1 target
+  if ((DRY_RUN)); then
+    log "perguntaria: \"Deseja encerrar a sessão?\" (sim = fecha o shell que chamou o script; não = mostra o aviso final)"
+    return 0
+  fi
+  if ask_yn "Deseja encerrar a sessão? (sim = fecha este shell/terminal)" n; then
+    if target=$(find_parent_shell); then
+      log "Encerrando a sessão..."
+      cleanup
+      kill -HUP "$target" 2>/dev/null || true
+      exit 0
+    fi
+    warn "não consegui identificar com segurança o shell que chamou o script; digite 'exit' ou feche o terminal."
+  fi
+  log "$msg"
+}
+
+# ─── Temas Minecraft (só desktop) ─────────────────────────────────────────────
+# GRUB: minegrub-world-sel-theme (Lxtharia). Plymouth: minecraft-plymouth-theme (nikp123).
+# Mexe no bootloader e no initramfs, por isso só roda se a pessoa aceitar (pergunta no
+# começo ou --temas-minecraft). Antes disso tira um snapshot do snapper, se existir, e
+# guarda a versão original de cada arquivo alterado em <arquivo>.mc.bak (só na primeira vez).
+MC_NEED_MKCONFIG=0
+GRUB_OK=0
+GRUB_DIR=""; GRUB_CFG=""; GRUB_MKCONFIG=""
+
+decide_minecraft_themes() {
+  is_desktop || { MC_THEMES=0; return 0; }
+  case $MC_THEMES in 1|0) return 0 ;; esac
+  if ((DRY_RUN)); then
+    log "perguntaria: \"Instalar os temas Minecraft (GRUB + Plymouth)?\" (simulando sim)"
+    MC_THEMES=1; return 0
+  fi
+  if ask_yn "Instalar os temas Minecraft (GRUB + Plymouth)? Altera o bootloader e o initramfs." n; then
+    MC_THEMES=1
+  else
+    MC_THEMES=0
+  fi
+}
+
+mc_backup() {  # arquivo — guarda a versão original uma única vez (arquivo.mc.bak)
+  local f=$1
+  [[ -e $f && ! -e $f.mc.bak ]] || return 0
+  run $SUDO cp -a "$f" "$f.mc.bak"
+  # O grub-mkconfig executa tudo que for executável em /etc/grub.d, backup incluído, e isso
+  # duplicaria as entradas do menu. O cp -a preserva o modo, então tira a permissão de execução.
+  run $SUDO chmod a-x "$f.mc.bak"
+}
+
+# Versões antigas deste script deixavam os .mc.bak de /etc/grub.d executáveis (veja acima).
+# Corrige os que já existem. Retorna 0 se mudou algo (aí o grub.cfg precisa ser regenerado).
+mc_defuse_grub_d_backups() {
+  local f fixed=1
+  for f in "$GRUB_D_DIR"/*.mc.bak; do
+    [[ -f $f && -x $f ]] || continue
+    run $SUDO chmod a-x "$f"
+    log "GRUB: $f deixou de ser executável (o grub-mkconfig o executaria e duplicaria entradas do menu)"
+    fixed=0
+  done
+  return $fixed
+}
+
+mc_clone() {  # url destino
+  run git clone --depth 1 --quiet "$1" "$2" && return 0
+  warn "não consegui clonar $1"
+  return 1
+}
+
+mc_snapshot() {
+  command -v snapper >/dev/null || return 0
+  snapper list-configs 2>/dev/null | grep -qE '^root[[:space:]]' || return 0
+  log "snapper: snapshot antes de mexer no bootloader/initramfs"
+  run $SUDO snapper -c root create -d "setup.sh: antes dos temas Minecraft" \
+    || warn "o snapshot falhou; seguindo sem ele"
+}
+
+# Define CHAVE=VALOR em /etc/default/grub (troca a linha ativa ou acrescenta no fim).
+grub_set() {  # chave valor
+  local key=$1 val=$2 f=$GRUB_DEFAULT_FILE
+  if grep -qxF "$key=$val" "$f" 2>/dev/null; then return 0; fi
+  if grep -qE "^$key=" "$f" 2>/dev/null; then
+    run $SUDO sed -i -E "s|^$key=.*|$key=$val|" "$f"
+  else
+    append_line "$key=$val" "$f"
+  fi
+}
+
+# GRUB só é usado se existir /etc/default/grub, a pasta /boot/grub (ou grub2) e o grub-mkconfig.
+# O tema não funciona em Limine/systemd-boot.
+mc_detect_grub() {
+  local pref
+  GRUB_DIR=""; GRUB_CFG=""; GRUB_MKCONFIG=""
+  [[ -f $GRUB_DEFAULT_FILE ]] || return 1
+  if   [[ -d $BOOT_DIR/grub  ]]; then pref=grub     # Arch, Debian, Ubuntu
+  elif [[ -d $BOOT_DIR/grub2 ]]; then pref=grub2    # Fedora
+  else return 1; fi
+  GRUB_DIR=$BOOT_DIR/$pref
+  GRUB_CFG=$GRUB_DIR/grub.cfg
+  GRUB_MKCONFIG=$pref-mkconfig
+  command -v "$GRUB_MKCONFIG" >/dev/null
+}
+
+# Os dois patches opcionais do tema (ícone da entrada UEFI e do submenu "Advanced options").
+# As expressões do sed são as do install_theme.sh do tema. Rodar de novo não duplica nada.
+# Atualizações do pacote do GRUB podem desfazer isso: rode o script de novo para reaplicar.
+mc_patch_grub_icons() {
+  local f expr
+  f=$GRUB_D_DIR/30_uefi-firmware
+  if [[ -f $f ]] && ! grep -q -- '--class uefi' "$f"; then
+    mc_backup "$f"
+    expr='/--class uefi/!s#(menuentry '\''\$LABEL'\'')(.*)$#\1 --class uefi \2#'
+    run $SUDO sed -i -E "$expr" "$f"
+    log "GRUB: ícone da entrada UEFI (30_uefi-firmware)"
+  fi
+  f=$GRUB_D_DIR/10_linux
+  if [[ -f $f ]] && ! grep -q -- '--class submenu' "$f"; then
+    mc_backup "$f"
+    expr='/--class submenu/!s#(gettext_printf "Advanced options for %s" "\$\{OS\}" \| grub_quote\)'\'' )\s*(.*)$#\1 --class submenu \2#'
+    run $SUDO sed -i -E "$expr" "$f"
+    log "GRUB: ícone do submenu Advanced options (10_linux)"
+  fi
+}
+
+mc_grub_theme() {  # pasta do clone
+  local src=$1 tdir=$GRUB_DIR/themes/minegrub-world-selection
+  log "GRUB: instalando o tema minegrub-world-selection em $GRUB_DIR/themes"
+  run $SUDO mkdir -p "$GRUB_DIR/themes"
+  run $SUDO cp -ru "$src/minegrub-world-selection" "$GRUB_DIR/themes/"
+  mc_backup "$GRUB_DEFAULT_FILE"
+  grub_set GRUB_TERMINAL_OUTPUT gfxterm
+  grub_set GRUB_TIMEOUT_STYLE menu      # o tema só aparece com o menu visível
+  grub_set GRUB_THEME "$tdir/theme.txt"
+  mc_patch_grub_icons
+  MC_NEED_MKCONFIG=1
+}
+
+# mkinitcpio (Arch): o hook plymouth vem logo depois de udev (ou systemd).
+mc_mkinitcpio_hook() {
+  [[ -f $MKINITCPIO_CONF ]] || return 0   # apt usa initramfs-tools e dnf usa dracut: o install.sh do tema cuida deles
+  if grep -qE '^[[:space:]]*HOOKS=\(.*\bplymouth\b' "$MKINITCPIO_CONF"; then return 0; fi
+  if ! grep -qE '^[[:space:]]*HOOKS=\(.*\b(udev|systemd)\b' "$MKINITCPIO_CONF"; then
+    warn "não achei 'udev' nem 'systemd' no HOOKS de $MKINITCPIO_CONF; adicione o hook 'plymouth' à mão, logo depois deles"
+    return 0
+  fi
+  mc_backup "$MKINITCPIO_CONF"
+  run $SUDO sed -i -E 's/^([[:space:]]*HOOKS=\(.*\b(udev|systemd)\b)/\1 plymouth/' "$MKINITCPIO_CONF"
+  log "mkinitcpio: hook plymouth adicionado ao HOOKS"
+  local d
+  for d in "$MKINITCPIO_CONF_D"/*.conf; do
+    if [[ -f $d ]] && grep -qE '^[[:space:]]*HOOKS=' "$d"; then
+      warn "$d também define HOOKS e passa por cima do $MKINITCPIO_CONF; confira se 'plymouth' está lá"
+    fi
+  done
+}
+
+# O Plymouth só aparece com "splash" (e "quiet", para as mensagens do kernel não taparem a tela).
+mc_splash_cmdline() {
+  local f=$GRUB_DEFAULT_FILE w
+  if [[ $PM == dnf ]]; then
+    log "Fedora: o 'rhgb quiet' padrão já aciona o Plymouth; linha de comando do kernel mantida"
+    return 0
+  fi
+  if ((! GRUB_OK)); then
+    warn "bootloader sem GRUB: adicione 'quiet splash' à linha de comando do kernel no seu bootloader"
+    return 0
+  fi
+  if ! grep -qE '^GRUB_CMDLINE_LINUX_DEFAULT=' "$f"; then
+    mc_backup "$f"
+    append_line 'GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"' "$f"
+    log "GRUB: GRUB_CMDLINE_LINUX_DEFAULT=\"quiet splash\""
+    MC_NEED_MKCONFIG=1
+    return 0
+  fi
+  for w in quiet splash; do
+    if grep -E '^GRUB_CMDLINE_LINUX_DEFAULT=' "$f" | tail -1 | grep -qE "[\"' ]$w([\"' ]|\$)"; then continue; fi
+    mc_backup "$f"
+    run $SUDO sed -i -E "s/^(GRUB_CMDLINE_LINUX_DEFAULT=([\"']))(.*)\\2[[:space:]]*\$/\\1\\3 $w\\2/" "$f"
+    log "GRUB: '$w' acrescentado a GRUB_CMDLINE_LINUX_DEFAULT"
+    MC_NEED_MKCONFIG=1
+  done
+}
+
+mc_plymouth_theme() {  # pasta do clone
+  local src=$1 p shim="" pathenv=() pk=(plymouth imagemagick)
+  [[ $PM == dnf ]] && pk=(plymouth plymouth-plugin-script ImageMagick)
+  for p in "${pk[@]}"; do
+    if ! pm_install "$p"; then
+      warn "falhou: $p (tema do Plymouth pulado)"
+      return 1
+    fi
+  done
+  # Debian/Ubuntu: o plugin de texto fica num pacote à parte, quando existe.
+  if [[ $PM == apt ]] && apt-cache show plymouth-label >/dev/null 2>&1; then
+    pm_install plymouth-label || warn "não consegui instalar o plymouth-label (só afeta o texto da tela de senha)"
+  fi
+  # O install.sh do tema exige o comando "magick" (ImageMagick 7); o 6 só tem "convert".
+  if ((! DRY_RUN)) && ! command -v magick >/dev/null && command -v convert >/dev/null; then
+    shim=$(mktemp -d); CLEANUP_DIRS+=("$shim")
+    printf '#!/bin/sh\nexec convert "$@"\n' > "$shim/magick"
+    chmod 755 "$shim/magick"
+    pathenv=("PATH=$shim:$PATH")
+    log "ImageMagick sem 'magick': usando 'convert' no lugar"
+  fi
+  log "Plymouth: instalando o tema mc"
+  if ! run $SUDO env ${pathenv[@]+"${pathenv[@]}"} bash -c 'cd "$1" && exec bash ./install.sh' _ "$src"; then
+    warn "o install.sh do tema falhou; Plymouth não foi configurado"
+    return 1
+  fi
+  mc_mkinitcpio_hook
+  mc_splash_cmdline
+  log "Plymouth: definindo o tema mc e regenerando o initramfs (pode demorar)"
+  if [[ $PM == pacman ]] && command -v mkinitcpio >/dev/null; then
+    # No Arch o initramfs é refeito direto pelo mkinitcpio (não dependemos do -R do plymouth).
+    if ! run $SUDO plymouth-set-default-theme mc || ! run $SUDO mkinitcpio -P; then
+      warn "falhou; rode: plymouth-set-default-theme mc && mkinitcpio -P"
+      return 1
+    fi
+  elif ! run $SUDO plymouth-set-default-theme -R mc; then   # apt: update-initramfs; dnf: dracut
+    warn "plymouth-set-default-theme falhou; rode: plymouth-set-default-theme -R mc"
+    return 1
+  fi
+}
+
+minecraft_themes() {
+  [[ $MC_THEMES == 1 ]] && is_desktop || return 0
+  if ((! DRY_RUN)); then
+    command -v git >/dev/null || { warn "git não encontrado; temas Minecraft pulados"; return 1; }
+  fi
+  local tmp
+  log "Temas Minecraft: GRUB (minegrub-world-selection) + Plymouth (mc)"
+  GRUB_OK=0
+  mc_detect_grub && GRUB_OK=1
+  if ((GRUB_OK)) && mc_defuse_grub_d_backups; then MC_NEED_MKCONFIG=1; fi
+  mc_snapshot
+  tmp=$(mktemp -d); CLEANUP_DIRS+=("$tmp")
+
+  if ((GRUB_OK)); then
+    if mc_clone "$MC_GRUB_REPO" "$tmp/grub"; then mc_grub_theme "$tmp/grub"; fi
+  else
+    warn "GRUB não detectado (precisa de $GRUB_DEFAULT_FILE, $BOOT_DIR/grub ou grub2 e grub-mkconfig); tema do GRUB pulado. Ele não funciona em Limine/systemd-boot."
+  fi
+
+  if mc_clone "$MC_PLYMOUTH_REPO" "$tmp/plymouth"; then
+    mc_plymouth_theme "$tmp/plymouth" || warn "o tema do Plymouth não foi concluído"
+  fi
+
+  if ((MC_NEED_MKCONFIG)); then
+    log "GRUB: regenerando $GRUB_CFG"
+    run $SUDO "$GRUB_MKCONFIG" -o "$GRUB_CFG" \
+      || warn "falhou; rode: $GRUB_MKCONFIG -o $GRUB_CFG"
+  fi
+  cleanup
+  log "Temas Minecraft concluídos. Para reverter, rode: bash setup.sh --reverter-temas"
+}
+
+# ─── Reverter os temas Minecraft (--reverter-temas) ───────────────────────────
+# Só mexe no que os arquivos <arquivo>.mc.bak indicam que o script alterou:
+#   - /etc/default/grub volta para a cópia original (.mc.bak);
+#   - 30_uefi-firmware, 10_linux e mkinitcpio.conf têm só o trecho do tema removido (não voltam
+#     para a cópia velha, para não desfazer uma atualização do pacote que veio depois);
+#   - o tema do GRUB e os arquivos do tema do Plymouth são apagados e o tema padrão do Plymouth é resetado.
+# No fim regenera o GRUB e o initramfs. Os pacotes plymouth e imagemagick continuam instalados.
+mc_unpatch() {  # arquivo expressão-sed descrição — desfaz um patch do tema (só se houver .mc.bak)
+  local f=$1 expr=$2 what=$3
+  [[ -e $f.mc.bak ]] || return 1
+  run $SUDO sed -i -E "$expr" "$f"
+  run $SUDO rm -f "$f.mc.bak"
+  log "revertido: $what ($f)"
+}
+
+revert_minecraft_themes() {
+  local f d need_mkconfig=0 need_initramfs=0 found=0 current
+  mc_detect_grub || true   # só para saber GRUB_DIR/GRUB_MKCONFIG; a falta do GRUB não impede o resto
+
+  # O que existe para desfazer?
+  for f in "$GRUB_DEFAULT_FILE" "$GRUB_D_DIR/30_uefi-firmware" "$GRUB_D_DIR/10_linux" "$MKINITCPIO_CONF"; do
+    [[ -e $f.mc.bak ]] && found=1
+  done
+  for d in "$BOOT_DIR/grub/themes/minegrub-world-selection" "$BOOT_DIR/grub2/themes/minegrub-world-selection" \
+           "$PLYMOUTH_THEMES_DIR/mc"; do
+    [[ -d $d ]] && found=1
+  done
+  if ((! found)); then
+    log "Nenhum vestígio dos temas Minecraft encontrado (sem .mc.bak nem pastas dos temas); nada a reverter."
+    return 0
+  fi
+
+  log "Vai desfazer os temas Minecraft: restaura $GRUB_DEFAULT_FILE a partir de .mc.bak (edições feitas nele depois"
+  log "da instalação dos temas voltam ao que era), remove os patches do GRUB/mkinitcpio, apaga os temas e regenera GRUB e initramfs."
+  if ((! DRY_RUN)) && ! ask_yn "Reverter os temas Minecraft agora?" n; then
+    log "Nada foi alterado."
+    return 0
+  fi
+  mc_snapshot
+
+  # 1. GRUB: arquivo de configuração original
+  if [[ -e $GRUB_DEFAULT_FILE.mc.bak ]]; then
+    run $SUDO cp -a "$GRUB_DEFAULT_FILE.mc.bak" "$GRUB_DEFAULT_FILE"
+    run $SUDO rm -f "$GRUB_DEFAULT_FILE.mc.bak"
+    log "revertido: $GRUB_DEFAULT_FILE"
+    need_mkconfig=1
+  fi
+  # 2. GRUB: patches de ícone (o inverso exato do que o mc_patch_grub_icons faz)
+  mc_unpatch "$GRUB_D_DIR/30_uefi-firmware" "s/(menuentry '\\\$LABEL') --class uefi /\\1/" "ícone da entrada UEFI" \
+    && need_mkconfig=1
+  mc_unpatch "$GRUB_D_DIR/10_linux" "s/ --class submenu //" "ícone do submenu Advanced options" \
+    && need_mkconfig=1
+  # 3. GRUB: o tema em si
+  for d in "$BOOT_DIR/grub/themes/minegrub-world-selection" "$BOOT_DIR/grub2/themes/minegrub-world-selection"; do
+    if [[ -d $d ]]; then
+      run $SUDO rm -rf "$d"
+      log "removido: $d"
+      need_mkconfig=1
+    fi
+  done
+
+  # 4. Plymouth: volta ao tema padrão antes de apagar o tema mc
+  if command -v plymouth-set-default-theme >/dev/null; then
+    current=$(plymouth-set-default-theme 2>/dev/null || true)
+    if [[ $current == mc ]] || ((DRY_RUN)); then
+      run $SUDO plymouth-set-default-theme --reset || warn "não consegui resetar o tema do Plymouth; rode: plymouth-set-default-theme --reset"
+      need_initramfs=1
+    fi
+  fi
+  # 5. mkinitcpio: tira o hook plymouth que o script colocou
+  mc_unpatch "$MKINITCPIO_CONF" 's/^([[:space:]]*HOOKS=\(.*) plymouth\b/\1/' "hook plymouth do HOOKS" \
+    && need_initramfs=1
+  # 6. Plymouth: arquivos do tema, da fonte e dos hooks do initramfs
+  for f in "$PLYMOUTH_THEMES_DIR/mc" "$MC_FONT_FILE" "$MC_FONTCONF_FILE" \
+           "$DRACUT_CONF_D/99-minecraft-plymouth.conf" "$MKINITCPIO_CONF_D/99-minecraft-plymouth.conf" \
+           "$INITRAMFS_HOOKS_DIR/minecraft-font-hook"; do
+    if [[ -e $f ]]; then
+      run $SUDO rm -rf "$f"
+      log "removido: $f"
+      need_initramfs=1
+    fi
+  done
+
+  # 7. Regenerar
+  if ((need_initramfs)); then
+    log "Regenerando o initramfs (pode demorar)"
+    if   [[ $PM == pacman ]] && command -v mkinitcpio >/dev/null; then run $SUDO mkinitcpio -P || warn "falhou; rode: mkinitcpio -P"
+    elif [[ $PM == apt ]];    then run $SUDO update-initramfs -u -k all || warn "falhou; rode: update-initramfs -u -k all"
+    elif [[ $PM == dnf ]];    then run $SUDO dracut -f --regenerate-all || warn "falhou; rode: dracut -f --regenerate-all"
+    else warn "regenere o initramfs à mão"; fi
+  fi
+  if ((need_mkconfig)); then
+    if [[ -n $GRUB_MKCONFIG ]] && command -v "$GRUB_MKCONFIG" >/dev/null; then
+      log "GRUB: regenerando $GRUB_CFG"
+      run $SUDO "$GRUB_MKCONFIG" -o "$GRUB_CFG" || warn "falhou; rode: $GRUB_MKCONFIG -o $GRUB_CFG"
+    else
+      warn "grub-mkconfig não encontrado; regenere o grub.cfg à mão"
+    fi
+  fi
+  log "Temas Minecraft revertidos."
+}
+
 # ─── Execução ─────────────────────────────────────────────────────────────────
 main() {
   parse_args "$@"
@@ -944,6 +1385,8 @@ main() {
 
   detect_env
   detect_pm
+
+  if ((REVERT_MC)) && ! is_desktop; then die "--reverter-temas só vale para distros de desktop (os temas não são instalados no Termux nem no proot)."; fi
 
   # No proot o NEW_USER não tem sudo, então o grupo wheel não serve para nada.
   if ((PROOT)); then NEW_GROUPS=(audio video); fi
@@ -964,8 +1407,8 @@ main() {
     run_user_steps
     echo
     print_failed
-    log "Pronto. Abra um novo terminal ou rode: exec zsh"
     hint_p10k
+    finish_session "Pronto. Abra um novo terminal ou rode: exec zsh"
     return 0
   fi
 
@@ -978,11 +1421,8 @@ main() {
     proot_phase
     echo
     print_failed
-    if ((DRY_RUN)); then
-      log "Simulação concluída: nada foi alterado."
-    else
-      log "Pronto. Abra um novo shell do root (ele pergunta se quer atualizar e entra como $NEW_USER) ou rode: su - $NEW_USER"
-    fi
+    ((DRY_RUN)) && log "Simulação concluída: nada foi alterado."
+    finish_session "Pronto. Abra um novo shell do root (ele pergunta se quer atualizar e entra como $NEW_USER) ou rode: su - $NEW_USER"
     return 0
   fi
 
@@ -994,22 +1434,26 @@ main() {
     else
       [[ -f $SCRIPT_PATH ]] || die "Salve o script em disco e rode: bash setup.sh"
       log "Reexecutando com sudo"
-      exec sudo env "REPO_URL=$REPO_URL" "NEW_USER=$NEW_USER" bash "$SCRIPT_PATH" "$@"
+      exec sudo env "REPO_URL=$REPO_URL" "NEW_USER=$NEW_USER" "MC_THEMES=$MC_THEMES" bash "$SCRIPT_PATH" "$@"
     fi
   fi
   if ((! DRY_RUN)); then
     [[ -f $SCRIPT_PATH ]] || die "Salve o script em disco e rode: bash setup.sh"
   fi
 
+  if ((REVERT_MC)); then
+    revert_minecraft_themes
+    ((DRY_RUN)) && log "Simulação concluída: nada foi alterado."
+    return 0
+  fi
+
+  decide_minecraft_themes   # pergunta já no começo, para você não precisar ficar olhando o resto
   system_phase
 
   echo
   print_failed
-  if ((DRY_RUN)); then
-    log "Simulação concluída: nada foi alterado."
-  else
-    log "Pronto. Entre como $NEW_USER (faça login ou rode: su - $NEW_USER)."
-  fi
+  ((DRY_RUN)) && log "Simulação concluída: nada foi alterado."
+  finish_session "Pronto. Entre como $NEW_USER (faça login ou rode: su - $NEW_USER)."
 }
 
 main "$@"
