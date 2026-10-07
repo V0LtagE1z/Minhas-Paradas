@@ -93,7 +93,7 @@ No Termux, rodar como root continua bloqueado de propósito.
 
 ## O que o script faz
 
-Nas distros de desktop, as etapas 1 a 3 rodam como root; depois o script cria o usuário `gustavo` (seção acima) e as etapas 4 a 10 rodam como ele. No Termux tudo roda direto, sem criar usuário. No proot o fluxo é o da seção anterior (as etapas abaixo se aplicam, menos `paru`, Kitty e fontes).
+Nas distros de desktop, as etapas 1 a 3 rodam como root; depois o script cria o usuário `gustavo` (seção acima) e as etapas 4 a 10 rodam como ele. A etapa 11 (temas Minecraft) e a pergunta final da etapa 12 voltam a rodar como root. No Termux tudo roda direto, sem criar usuário. No proot o fluxo é o da seção anterior (as etapas abaixo se aplicam, menos `paru`, Kitty e fontes).
 
 **Antes de tudo, só no Arch puro (`ID=arch`) de desktop:** instala o `rate-mirrors` (está no repositório oficial `extra`), ranqueia os mirrors, guarda a mirrorlist antiga em `/etc/pacman.d/mirrorlist.bak` (ou `.bak.1`, `.bak.2`...) e roda `pacman -Syyu`. É `-Syyu` e não só `-Syy`: atualizar o banco sem atualizar os pacotes é update parcial e quebra o sistema. CachyOS, EndeavourOS e Arch ARM mantêm a mirrorlist deles. `SKIP_MIRRORS=1` pula a etapa; `FORCE_MIRRORS=1` ranqueia de novo mesmo se a lista já veio do `rate-mirrors`.
 
@@ -112,6 +112,28 @@ Nas distros de desktop, as etapas 1 a 3 rodam como root; depois o script cria o 
 10. Instala a fonte MesloLGS NF:
     - Termux: baixa só a Regular, como `~/.termux/font.ttf`.
     - Distros: baixa Regular, Bold, Italic e Bold Italic (do repo `romkatv/powerlevel10k-media`) para `~/.local/share/fonts/MesloLGS-NF` e atualiza o cache com `fc-cache`.
+11. **Só em distros, opcional:** instala os temas Minecraft (veja a seção abaixo). É a última etapa do setup.
+12. **No fim, em qualquer ambiente:** pergunta `Deseja encerrar a sessão?`. Se você responder que sim, o script fecha o shell que o chamou (um `exit` dentro do script só encerraria o próprio script, então ele manda `SIGHUP` para o shell interativo que está acima, pulando `sudo`/`su`). Se responder que não, ou se não houver terminal para perguntar, mostra o aviso final de sempre (`Pronto. Entre como gustavo...`). Em `--dry-run` ele só informa que perguntaria.
+
+## Temas Minecraft (GRUB + Plymouth)
+
+Só em distros de desktop. O script pergunta no começo se você quer instalar; `--temas-minecraft` (ou `MC_THEMES=1`) aceita sem perguntar e `--sem-temas-minecraft` (ou `MC_THEMES=0`) pula. Sem terminal para perguntar, o padrão é não instalar.
+
+- **GRUB:** [minegrub-world-sel-theme](https://github.com/Lxtharia/minegrub-world-sel-theme). Copia o tema para `/boot/grub/themes` (`/boot/grub2/themes` no Fedora), define `GRUB_THEME`, `GRUB_TERMINAL_OUTPUT=gfxterm` e `GRUB_TIMEOUT_STYLE=menu` em `/etc/default/grub`, aplica os patches de ícone da entrada UEFI e do submenu "Advanced options" e roda o `grub-mkconfig`. Só funciona se o bootloader for o GRUB; em Limine ou systemd-boot essa parte é pulada com um aviso.
+- **Plymouth:** [minecraft-plymouth-theme](https://github.com/nikp123/minecraft-plymouth-theme). Instala `plymouth` e o ImageMagick (no Fedora também `plymouth-plugin-script`), roda o `install.sh` do tema, adiciona o hook `plymouth` ao `HOOKS` do `/etc/mkinitcpio.conf` (Arch), acrescenta `quiet splash` ao `GRUB_CMDLINE_LINUX_DEFAULT` (no Fedora o `rhgb quiet` padrão já basta) e define o tema `mc` regenerando o initramfs (`mkinitcpio -P` no Arch; `plymouth-set-default-theme -R mc` no Debian, Ubuntu e Fedora). Em outros bootloaders, o script avisa para você acrescentar `quiet splash` à linha de comando do kernel por conta própria.
+- Antes de mexer em qualquer coisa, tira um snapshot do snapper (config `root`), se existir.
+- Cada arquivo alterado ganha uma cópia da versão original ao lado, como `<arquivo>.mc.bak`, criada só na primeira vez. Os `.mc.bak` ficam sem permissão de execução: o `grub-mkconfig` executa tudo que for executável em `/etc/grub.d`, e um backup executável duplicaria as entradas do menu. (Versões antigas do script deixavam esses backups executáveis; rodar o script de novo com `--temas-minecraft` corrige e regenera o `grub.cfg`.)
+- Atualizações do pacote do GRUB podem sobrescrever os patches de ícone em `/etc/grub.d`; rode o script de novo para reaplicá-los.
+
+### Reverter: `bash setup.sh --reverter-temas`
+
+Desfaz tudo e sai (não executa mais nada do setup). Mostra o que vai fazer, pergunta antes (padrão: não) e tira um snapshot do snapper, se existir. Suporta `--dry-run`.
+
+- `/etc/default/grub` volta para a cópia `.mc.bak`. **Edições que você fez nele depois de instalar os temas se perdem**; refaça-as depois.
+- `30_uefi-firmware`, `10_linux` e `mkinitcpio.conf` não voltam para a cópia velha: o script remove só o trecho que ele mesmo acrescentou (`--class uefi`, `--class submenu`, hook `plymouth`). Assim uma atualização do pacote que veio depois não é desfeita.
+- Apaga o tema do GRUB e os arquivos do tema do Plymouth (tema `mc`, fonte Minecraft, configs do dracut/mkinitcpio e o hook do initramfs-tools), reseta o tema padrão do Plymouth, regenera o initramfs (`mkinitcpio -P`, `update-initramfs -u -k all` ou `dracut -f --regenerate-all`) e o `grub.cfg`.
+- Os pacotes `plymouth` e `imagemagick` continuam instalados.
+- Sem vestígios dos temas, não faz nada. Sem terminal para perguntar, não altera nada.
 
 ## Backups
 
@@ -124,6 +146,8 @@ Como o repo é a fonte da verdade, alterações feitas direto no `~/.zshrc` ou n
 ## Limitações
 
 - O `emerge` (Gentoo) ainda não é suportado.
+- Os temas Minecraft e o `--reverter-temas` foram validados com `--dry-run` e com testes em arquivos de exemplo (instalar, reverter e comparar com os originais: `/etc/default/grub`, `mkinitcpio.conf` e `/etc/grub.d`), mas não num boot de verdade. Teste primeiro no Arch com GRUB; Fedora, Debian e Ubuntu só foram escritos a partir da documentação dos dois temas.
+- Encerrar a sessão fecha o shell (ou o terminal) que chamou o script; não faz logout da sessão gráfica.
 - O modo proot foi escrito para qualquer distro com `apt`, `dnf` ou `pacman`, mas só foi validado com `--dry-run`. Teste de verdade em cada distro antes de confiar (o `su -l gustavo` e o `useradd` dependem de como o proot emula usuários).
 - Nas distros de desktop o setup é sempre aplicado ao usuário `gustavo`, e não ao usuário que rodou o script. Para rodar de novo depois, basta executar o script outra vez (por root ou por qualquer usuário com `sudo`, inclusive o próprio `gustavo`). No proot, rode de novo como root.
 - Termux não cria usuário.
