@@ -74,6 +74,7 @@ ARCH_RELEASE_FILE="${ARCH_RELEASE_FILE:-/etc/arch-release}"
 PROC_STATUS_FILE="${PROC_STATUS_FILE:-/proc/self/status}"
 PACMAN_CONF="${PACMAN_CONF:-/etc/pacman.conf}"
 ROOT_PREFIX="${ROOT_PREFIX:-}"   # só para testes: prefixo dos /etc e /usr/lib lidos por detect_zshrc_family
+UNAME_O="${UNAME_O:-}"           # só para testes: substitui "uname -o" em detect_zshrc_termux
 
 # Temas Minecraft (só distros de desktop):
 #   GRUB     -> Lxtharia/minegrub-world-sel-theme
@@ -726,8 +727,60 @@ report_zshrc_family() {
   fi
 }
 
+# Simula o teste "isso é Termux?" do "Distro Proot/.zshrc" (função _zshrc_is_termux).
+# As variáveis do Termux ($TERMUX_VERSION, $PREFIX) podem vazar para dentro do proot; se o
+# .zshrc confiasse só nelas, o root cairia no ramo do Termux (pkg update) e nunca atualizaria.
+# MANTENHA EM SINCRONIA com aquele .zshrc (mesma ordem de critérios).
+# Retorna 0 se o .zshrc trataria o ambiente como Termux, 1 se como distro; o motivo
+# fica em ZSHRC_TERMUX_SRC.
+ZSHRC_TERMUX_SRC=""
+detect_zshrc_termux() {
+  local kernel os f
+  ZSHRC_TERMUX_SRC=""
+
+  if [[ -z ${TERMUX_VERSION:-} && ${PREFIX:-} != *com.termux* ]]; then
+    ZSHRC_TERMUX_SRC="sem variáveis do Termux (TERMUX_VERSION/PREFIX)"
+    return 1
+  fi
+
+  kernel=${KERNEL_RELEASE:-$(uname -r 2>/dev/null || true)}
+  kernel=${kernel,,}
+  os=${UNAME_O:-$(uname -o 2>/dev/null || true)}
+
+  if [[ $kernel == *proot* ]]; then
+    ZSHRC_TERMUX_SRC="kernel de proot (\"$kernel\"): as variáveis do Termux vazaram para dentro da distro"
+    return 1
+  fi
+  if [[ $os == Android ]]; then
+    ZSHRC_TERMUX_SRC="uname -o = Android"
+    return 0
+  fi
+  for f in etc/os-release usr/lib/os-release etc/arch-release etc/debian_version \
+           etc/fedora-release etc/redhat-release etc/SuSE-release etc/SUSE-brand \
+           etc/alpine-release; do
+    if [[ -e $ROOT_PREFIX/$f ]]; then
+      ZSHRC_TERMUX_SRC="há /$f: as variáveis do Termux vazaram para dentro da distro"
+      return 1
+    fi
+  done
+  if command -v pkg >/dev/null 2>&1; then
+    ZSHRC_TERMUX_SRC="sem sinais de distro e com 'pkg' no PATH"
+    return 0
+  fi
+  ZSHRC_TERMUX_SRC="variáveis do Termux, mas sem 'pkg' no PATH"
+  return 1
+}
+
+report_zshrc_termux() {
+  if detect_zshrc_termux; then
+    warn "o .zshrc do root trataria este proot como TERMUX (rodaria 'pkg update', que não existe aqui) e NÃO atualizaria o sistema; motivo: $ZSHRC_TERMUX_SRC"
+  else
+    log "o .zshrc do root trata este ambiente como distro Linux, não como Termux ($ZSHRC_TERMUX_SRC)"
+  fi
+}
+
 proot_phase() {
-  if ((DRY_RUN)); then report_zshrc_family; fi
+  if ((DRY_RUN)); then report_zshrc_termux; report_zshrc_family; fi
   prepare_proot_pacman
   pm_update
   install_packages

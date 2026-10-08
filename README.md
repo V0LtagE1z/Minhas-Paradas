@@ -87,6 +87,8 @@ Depois do setup, o `.zshrc` do root pergunta se você quer atualizar o sistema e
 
 Para escolher o gerenciador de pacotes dessa atualização, o `.zshrc` não depende só do `/etc/os-release` (algumas imagens, como o ALARM do proot-distro, não têm esse arquivo). Ele tenta, em ordem: `ID` e depois `ID_LIKE` de `/etc/os-release` e de `/usr/lib/os-release`; arquivos-marcadores como `/etc/arch-release` e `/etc/debian_version`; e, por último, o gerenciador que existir no `PATH` (`pacman`, `apt-get`, `dnf`, `zypper`, `apk`). No `--dry-run` em modo proot, o script informa qual gerenciador o `.zshrc` vai usar e por qual critério, ou avisa se ele não reconheceria a distro.
 
+Antes disso o `.zshrc` decide se está no Termux de verdade ou numa distro em proot, porque as variáveis do Termux (`TERMUX_VERSION` e `PREFIX`) podem vazar para dentro do proot. Se ele confiasse só nelas, o root cairia no ramo do Termux (`pkg update`) e nunca atualizaria. A ordem é: sem variáveis do Termux, não é Termux; kernel com `proot` em `uname -r`, é distro; `uname -o` igual a `Android`, é Termux; arquivos de distro (`os-release`, `arch-release` etc.), é distro; senão, só é Termux se o `pkg` existir. O `--dry-run` em modo proot avisa (`[!!]`) se o `.zshrc` cairia no ramo do Termux por engano. Para ver as decisões do `.zshrc` ao vivo, abra um shell com `ZSHRC_DEBUG=1 zsh`.
+
 O nome `gustavo` está fixo nesse `.zshrc` (no `su - gustavo`). Com `NEW_USER=outro` o usuário é criado, mas a troca automática não acontece até você ajustar essa linha.
 
 No Termux, rodar como root continua bloqueado de propósito.
