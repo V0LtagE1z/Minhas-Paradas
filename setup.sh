@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # setup.sh — pós-instalação: usuário + zsh + oh-my-zsh + powerlevel10k + dotfiles do repo Minhas-Paradas.
-# Suporta: Termux (pkg), Debian/Ubuntu (apt), Fedora (dnf), Arch/CachyOS (pacman + paru)
+# Suporta: Termux (pkg), Debian/Ubuntu (apt), Fedora (dnf), openSUSE (zypper), Arch/CachyOS (pacman + paru)
 # e essas mesmas distros rodando dentro de proot (proot-distro): lá o script roda como root,
 # sem sudo, paru, Kitty nem fontes (a fonte é a do próprio Termux).
 #
@@ -49,7 +49,7 @@ SKIP_MIRRORS="${SKIP_MIRRORS:-0}"
 FORCE_MIRRORS="${FORCE_MIRRORS:-0}"
 MIRRORLIST_FILE="${MIRRORLIST_FILE:-/etc/pacman.d/mirrorlist}"
 
-# Pacotes (o nome é igual nos 4 gerenciadores). Adicione os outros aqui.
+# Pacotes (o nome é igual em todos os gerenciadores; a exceção é o micro no zypper, tratada em pm_install). Adicione os outros aqui.
 PACKAGES=(zsh git curl fastfetch micro fzf zoxide)
 
 # Pacotes só para distros de desktop (ignorados no Termux).
@@ -260,6 +260,8 @@ detect_pm() {
   elif ((! PROOT)) && [[ -n "${TERMUX_VERSION:-}" || "${PREFIX:-}" == *com.termux* ]]; then
     PM=pkg; SUDO=""
   elif command -v apt-get >/dev/null; then PM=apt
+  # zypper antes do dnf: no openSUSE o dnf pode estar instalado, mas o gerenciador de verdade é o zypper.
+  elif command -v zypper >/dev/null;  then PM=zypper
   elif command -v dnf >/dev/null;     then PM=dnf
   elif command -v pacman >/dev/null;  then PM=pacman
   else die "Gerenciador de pacotes não suportado (emerge não está incluído)."
@@ -277,18 +279,35 @@ detect_pm() {
 
 pm_update() {
   case $PM in
-    pkg) run pkg update -y ;;
-    apt) run $SUDO apt-get update ;;
-    *)   : ;;  # dnf atualiza metadados sozinho; no pacman evitamos -Sy isolado
+    pkg)    run pkg update -y ;;
+    apt)    run $SUDO apt-get update ;;
+    zypper) zypper_run refresh || warn "zypper refresh falhou (algum repositório fora do ar?); sigo com os metadados que já existem" ;;
+    *)      : ;;  # dnf atualiza metadados sozinho; no pacman evitamos -Sy isolado
+  esac
+}
+
+# O zypper devolve códigos "informativos" (100+) mesmo quando a operação deu certo:
+# 102/103 = reinício do sistema/dos serviços recomendado, 106 = algum repositório foi ignorado.
+# Esses contam como sucesso. O 104 (pacote não encontrado) e os demais continuam sendo falha.
+zypper_run() {
+  local rc=0
+  run $SUDO zypper --non-interactive "$@" || rc=$?
+  case $rc in
+    0|102|103|106) return 0 ;;
+    *)             return "$rc" ;;
   esac
 }
 
 pm_install() {  # instala UM pacote
+  local pkg=$1
+  # No openSUSE o editor micro se chama micro-editor (o pacote "micro" não existe lá).
+  [[ $PM == zypper && $pkg == micro ]] && pkg=micro-editor
   case $PM in
-    pkg)    run pkg install -y "$1" ;;
-    apt)    run $SUDO apt-get install -y "$1" ;;
-    dnf)    run $SUDO dnf install -y "$1" ;;
-    pacman) run $SUDO pacman -S --needed --noconfirm "$1" ;;
+    pkg)    run pkg install -y "$pkg" ;;
+    apt)    run $SUDO apt-get install -y "$pkg" ;;
+    dnf)    run $SUDO dnf install -y "$pkg" ;;
+    zypper) zypper_run install "$pkg" ;;
+    pacman) run $SUDO pacman -S --needed --noconfirm "$pkg" ;;
   esac
 }
 
@@ -1256,7 +1275,7 @@ mc_splash_cmdline() {
 
 mc_plymouth_theme() {  # pasta do clone
   local src=$1 p shim="" pathenv=() pk=(plymouth imagemagick)
-  [[ $PM == dnf ]] && pk=(plymouth plymouth-plugin-script ImageMagick)
+  [[ $PM == dnf || $PM == zypper ]] && pk=(plymouth plymouth-plugin-script ImageMagick)
   for p in "${pk[@]}"; do
     if ! pm_install "$p"; then
       warn "falhou: $p (tema do Plymouth pulado)"
@@ -1415,7 +1434,7 @@ revert_minecraft_themes() {
     log "Regenerando o initramfs (pode demorar)"
     if   [[ $PM == pacman ]] && command -v mkinitcpio >/dev/null; then run $SUDO mkinitcpio -P || warn "falhou; rode: mkinitcpio -P"
     elif [[ $PM == apt ]];    then run $SUDO update-initramfs -u -k all || warn "falhou; rode: update-initramfs -u -k all"
-    elif [[ $PM == dnf ]];    then run $SUDO dracut -f --regenerate-all || warn "falhou; rode: dracut -f --regenerate-all"
+    elif [[ $PM == dnf || $PM == zypper ]]; then run $SUDO dracut -f --regenerate-all || warn "falhou; rode: dracut -f --regenerate-all"
     else warn "regenere o initramfs à mão"; fi
   fi
   if ((need_mkconfig)); then
