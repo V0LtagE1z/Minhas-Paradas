@@ -21,6 +21,7 @@
 # Distros de desktop, opcional: instala os temas Minecraft (GRUB: minegrub-world-sel-theme;
 # Plymouth: minecraft-plymouth-theme). Pergunta no começo; --temas-minecraft / --sem-temas-minecraft
 # respondem por você. Só funciona com GRUB; em Limine/systemd-boot só o Plymouth é instalado.
+# No WSL (detectado sozinho) essa etapa é pulada: o Windows inicia o kernel, não há bootloader.
 # No fim, em qualquer ambiente, pergunta se você quer encerrar a sessão (fecha o shell que chamou o script).
 #
 # Use --dry-run para ver o que seria feito sem alterar nada.
@@ -72,6 +73,9 @@ OS_RELEASE_FILE="${OS_RELEASE_FILE:-}"
 KERNEL_RELEASE="${KERNEL_RELEASE:-}"
 ARCH_RELEASE_FILE="${ARCH_RELEASE_FILE:-/etc/arch-release}"
 PROC_STATUS_FILE="${PROC_STATUS_FILE:-/proc/self/status}"
+PROC_VERSION_FILE="${PROC_VERSION_FILE:-/proc/version}"
+WSL_INTEROP_FILE="${WSL_INTEROP_FILE:-/proc/sys/fs/binfmt_misc/WSLInterop}"   # o WSL2 novo usa também o sufixo -late
+WSL_RUN_DIR="${WSL_RUN_DIR:-/run/WSL}"
 PACMAN_CONF="${PACMAN_CONF:-/etc/pacman.conf}"
 ROOT_PREFIX="${ROOT_PREFIX:-}"   # só para testes: prefixo dos /etc e /usr/lib lidos por detect_zshrc_family
 UNAME_O="${UNAME_O:-}"           # só para testes: substitui "uname -o" em detect_zshrc_termux
@@ -154,6 +158,8 @@ SUDO="sudo"
 FAILED=()
 PROOT=0         # 1 = rodando dentro de um proot (ex.: proot-distro no Termux), qualquer distro
 IS_ALARM=0      # 1 = Arch Linux ARM (só relevante junto com PROOT=1, para o keyring)
+WSL=0           # 1 = rodando no WSL1/WSL2 (sem bootloader próprio: o Windows é quem inicia o kernel)
+WSL_WHY=""      # o que levou a detectar o WSL (aparece no log)
 USER_PHASE=0    # 1 = chamado pelo próprio script, já como o novo usuário (interno)
 SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]:-$0}" 2>/dev/null || true)
 
@@ -173,7 +179,7 @@ usage() {
 Uso: bash setup.sh [--dry-run]
 
   --dry-run, -n           mostra o que seria feito (linhas [dry] e [sim]) sem alterar nada
-  --temas-minecraft       instala os temas Minecraft (GRUB + Plymouth) sem perguntar (só desktop)
+  --temas-minecraft       instala os temas Minecraft (GRUB + Plymouth) sem perguntar (só desktop; no WSL é ignorado)
   --sem-temas-minecraft   não instala e não pergunta pelos temas Minecraft
   --reverter-temas        desfaz os temas Minecraft (GRUB + Plymouth) e sai; não faz mais nada
   --help, -h              mostra esta ajuda
@@ -182,6 +188,7 @@ No fim o script pergunta se você quer encerrar a sessão (fecha o shell que cha
 
 Variáveis úteis: NEW_USER (padrão: gustavo), REPO_URL, REPO_DIR,
                  FORCE_PROOT=1 (força o modo proot se a detecção falhar),
+                 FORCE_WSL=1 (força o modo WSL) ou FORCE_WSL=0 (desliga a detecção de WSL),
                  SKIP_MIRRORS=1 (não ranquear os mirrors no Arch),
                  FORCE_MIRRORS=1 (ranquear de novo mesmo se já foi feito),
                  MC_THEMES=1|0 (o mesmo que --temas-minecraft / --sem-temas-minecraft).
@@ -244,8 +251,54 @@ detect_env() {
   fi
 }
 
+# Detecta o WSL (1 e 2). Ele não é uma VM comum: o Windows inicia o kernel direto, sem firmware,
+# sem bootloader e sem tela de boot, então GRUB, Plymouth e initramfs não fazem sentido lá.
+# Sinais, do mais para o menos confiável (qualquer um basta):
+#   1. "microsoft" ou "wsl" no kernel (uname -r: 5.15.x-microsoft-standard-WSL2; WSL1: 4.4.0-xxxxx-Microsoft)
+#      ou em /proc/version. Não depende de variável de ambiente, então sobrevive ao sudo/su;
+#   2. systemd-detect-virt devolve "wsl" (systemd 253 ou mais novo);
+#   3. /proc/sys/fs/binfmt_misc/WSLInterop (ou WSLInterop-late) e /run/WSL existem;
+#   4. WSL_DISTRO_NAME / WSL_INTEROP (o sudo costuma apagá-las, por isso são o último critério).
+# Kernel customizado (.wslconfig) que tire "microsoft" do nome ainda cai nos critérios 2 a 4.
+# FORCE_WSL=1 força o modo; FORCE_WSL=0 desliga a detecção (saída de emergência contra falso positivo).
+# Só vale para distro de desktop: Termux e proot decidem antes.
+detect_wsl() {
+  local kernel ver virt
+  WSL=0; WSL_WHY=""
+  case ${FORCE_WSL:-} in
+    0) return 0 ;;
+    1) WSL=1; WSL_WHY="FORCE_WSL=1"; return 0 ;;
+  esac
+  if ((PROOT)) || [[ $PM == pkg ]]; then return 0; fi
+
+  kernel=${KERNEL_RELEASE:-$(uname -r 2>/dev/null || true)}
+  ver=$(cat "$PROC_VERSION_FILE" 2>/dev/null || true)
+  virt=""
+  if command -v systemd-detect-virt >/dev/null 2>&1; then
+    virt=$(systemd-detect-virt 2>/dev/null || true)
+  fi
+
+  if [[ ${kernel,,} == *microsoft* || ${kernel,,} == *wsl* ]]; then
+    WSL_WHY="kernel \"$kernel\""
+  elif [[ ${ver,,} == *microsoft* || ${ver,,} == *wsl* ]]; then
+    WSL_WHY="$PROC_VERSION_FILE menciona Microsoft/WSL"
+  elif [[ $virt == wsl ]]; then
+    WSL_WHY="systemd-detect-virt: wsl"
+  elif [[ -e $WSL_INTEROP_FILE || -e $WSL_INTEROP_FILE-late || -d $WSL_RUN_DIR ]]; then
+    WSL_WHY="interop do WSL presente"
+  elif [[ -n ${WSL_DISTRO_NAME:-} || -n ${WSL_INTEROP:-} ]]; then
+    WSL_WHY="variáveis WSL_DISTRO_NAME/WSL_INTEROP"
+  fi
+  if [[ -n $WSL_WHY ]]; then WSL=1; fi
+  return 0
+}
+
 # Ambiente gráfico de verdade? (distro de desktop; não Termux e não proot)
 is_desktop() { [[ $PM != pkg && $PROOT != 1 ]]; }
+
+# Máquina que inicia o próprio kernel por um bootloader (GRUB, Limine, systemd-boot...)?
+# Distro de desktop fora do WSL. É o que decide GRUB, Plymouth, initramfs e snapshot de boot.
+has_bootloader() { is_desktop && ((! WSL)); }
 
 detect_pm() {
   # Dentro do proot as variáveis do Termux podem vazar: o proot decide antes do Termux.
@@ -1118,6 +1171,14 @@ GRUB_OK=0
 GRUB_DIR=""; GRUB_CFG=""; GRUB_MKCONFIG=""
 
 decide_minecraft_themes() {
+  # WSL: sem bootloader nem tela de boot, não há o que tematizar (e o initramfs nem é usado).
+  if ((WSL)); then
+    if [[ $MC_THEMES == 1 ]]; then
+      warn "WSL: --temas-minecraft ignorado (o Windows inicia o kernel; não existe GRUB nem Plymouth aqui)"
+    fi
+    MC_THEMES=0
+    return 0
+  fi
   is_desktop || { MC_THEMES=0; return 0; }
   case $MC_THEMES in 1|0) return 0 ;; esac
   if ((DRY_RUN)); then
@@ -1315,7 +1376,7 @@ mc_plymouth_theme() {  # pasta do clone
 }
 
 minecraft_themes() {
-  [[ $MC_THEMES == 1 ]] && is_desktop || return 0
+  [[ $MC_THEMES == 1 ]] && has_bootloader || return 0
   if ((! DRY_RUN)); then
     command -v git >/dev/null || { warn "git não encontrado; temas Minecraft pulados"; return 1; }
   fi
@@ -1457,6 +1518,10 @@ main() {
 
   detect_env
   detect_pm
+  detect_wsl
+  if ((WSL)); then
+    log "WSL detectado ($WSL_WHY): sem bootloader próprio, então GRUB, Plymouth e initramfs (temas Minecraft) serão pulados"
+  fi
 
   if ((REVERT_MC)) && ! is_desktop; then die "--reverter-temas só vale para distros de desktop (os temas não são instalados no Termux nem no proot)."; fi
 
