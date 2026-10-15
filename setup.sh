@@ -76,6 +76,11 @@ PROC_STATUS_FILE="${PROC_STATUS_FILE:-/proc/self/status}"
 PROC_VERSION_FILE="${PROC_VERSION_FILE:-/proc/version}"
 WSL_INTEROP_FILE="${WSL_INTEROP_FILE:-/proc/sys/fs/binfmt_misc/WSLInterop}"   # o WSL2 novo usa também o sufixo -late
 WSL_RUN_DIR="${WSL_RUN_DIR:-/run/WSL}"
+WSL_CONF_FILE="${WSL_CONF_FILE:-/etc/wsl.conf}"
+# WSL: faz o WSL abrir direto como $NEW_USER (em vez de root) via [user] default= no wsl.conf.
+# WSL_SET_DEFAULT_USER=0 não mexe no wsl.conf.
+WSL_SET_DEFAULT_USER="${WSL_SET_DEFAULT_USER:-1}"
+WSL_USER_CHANGED=0   # 1 = o wsl.conf mudou nesta execução (a distro precisa ser reiniciada pelo Windows)
 PACMAN_CONF="${PACMAN_CONF:-/etc/pacman.conf}"
 ROOT_PREFIX="${ROOT_PREFIX:-}"   # só para testes: prefixo dos /etc e /usr/lib lidos por detect_zshrc_family
 UNAME_O="${UNAME_O:-}"           # só para testes: substitui "uname -o" em detect_zshrc_termux
@@ -189,6 +194,7 @@ No fim o script pergunta se você quer encerrar a sessão (fecha o shell que cha
 Variáveis úteis: NEW_USER (padrão: gustavo), REPO_URL, REPO_DIR,
                  FORCE_PROOT=1 (força o modo proot se a detecção falhar),
                  FORCE_WSL=1 (força o modo WSL) ou FORCE_WSL=0 (desliga a detecção de WSL),
+                 WSL_SET_DEFAULT_USER=0 (no WSL, não define $NEW_USER como usuário padrão no wsl.conf),
                  SKIP_MIRRORS=1 (não ranquear os mirrors no Arch),
                  FORCE_MIRRORS=1 (ranquear de novo mesmo se já foi feito),
                  MC_THEMES=1|0 (o mesmo que --temas-minecraft / --sem-temas-minecraft).
@@ -689,8 +695,55 @@ run_user_phase() {
   cleanup
 }
 
+# WSL: o login automático no usuário novo é o [user] default= do /etc/wsl.conf. Mantém as outras
+# seções e chaves do arquivo, troca (ou cria) só o default= da seção [user] e guarda a cópia original
+# em wsl.conf.setup.bak (só na primeira vez). O WSL só lê o wsl.conf ao iniciar a distro: a mudança vale
+# depois de "wsl --terminate <distro>" (ou "wsl --shutdown") rodado pelo Windows.
+wsl_default_user() {
+  ((WSL)) || return 0
+  if [[ $WSL_SET_DEFAULT_USER != 1 ]]; then
+    log "WSL: usuário padrão não alterado (WSL_SET_DEFAULT_USER=$WSL_SET_DEFAULT_USER)"
+    return 0
+  fi
+  local conf=$WSL_CONF_FILE tmp
+  tmp=$(mktemp); CLEANUP_FILES+=("$tmp")
+  if [[ -f $conf ]]; then
+    awk -v user="$NEW_USER" '
+      function trim(s) { gsub(/^[ \t\r]+|[ \t\r]+$/, "", s); return s }
+      { t = trim($0) }
+      t ~ /^\[.*\]$/ {
+        if (insec && !done) { print "default=" user; done = 1 }   # [user] acabou sem default=
+        insec = (tolower(t) == "[user]"); if (insec) seen = 1
+        print; next
+      }
+      insec && !done && t ~ /^default[ \t]*=/ { print "default=" user; done = 1; next }
+      { print }
+      END {
+        if (insec && !done) print "default=" user
+        else if (!seen) { if (NR > 0) print ""; print "[user]"; print "default=" user }
+      }' "$conf" > "$tmp"
+  else
+    printf '[user]\ndefault=%s\n' "$NEW_USER" > "$tmp"
+  fi
+  if [[ -f $conf && $(<"$tmp") == "$(<"$conf")" ]]; then
+    log "WSL: $conf já define o usuário padrão $NEW_USER"
+    return 0
+  fi
+  if [[ -f $conf && ! -e $conf.setup.bak ]]; then run $SUDO cp -a "$conf" "$conf.setup.bak"; fi
+  run $SUDO install -m 644 "$tmp" "$conf"
+  log "WSL: $conf agora define [user] default=$NEW_USER"
+  WSL_USER_CHANGED=1
+}
+
+# Avisa como aplicar a mudança do wsl.conf (o shell que está rodando o script continua sendo o antigo).
+wsl_restart_hint() {
+  ((WSL_USER_CHANGED)) || return 0
+  log "WSL: para abrir já como $NEW_USER, reinicie a distro pelo Windows (PowerShell ou cmd): wsl --terminate ${WSL_DISTRO_NAME:-<nome-da-distro>}   (veja o nome em: wsl -l -v; ou use wsl --shutdown)"
+  log "WSL: para entrar como root quando precisar: wsl -u root   (ou 'su -' / sudo de dentro do $NEW_USER)"
+}
+
 system_phase() {
-  optimize_mirrors   # Arch puro: rate-mirrors + atualização completa, antes de qualquer outro pacote
+  optimize_mirrors  # Arch puro: rate-mirrors + atualização completa, antes de qualquer outro pacote
   pm_update
   install_packages
   install_desktop_packages
@@ -699,6 +752,7 @@ system_phase() {
   set_root_shell
   configure_sudo
   set_password
+  wsl_default_user || warn "WSL: não consegui definir $NEW_USER como usuário padrão em $WSL_CONF_FILE"
   run_user_phase
   # Por último: mexe no bootloader/initramfs e uma falha aqui não pode atrapalhar o setup principal.
   minecraft_themes || warn "os temas Minecraft não foram concluídos"
@@ -1571,7 +1625,7 @@ main() {
     else
       [[ -f $SCRIPT_PATH ]] || die "Salve o script em disco e rode: bash setup.sh"
       log "Reexecutando com sudo"
-      exec sudo env "REPO_URL=$REPO_URL" "NEW_USER=$NEW_USER" "MC_THEMES=$MC_THEMES" bash "$SCRIPT_PATH" "$@"
+      exec sudo env "REPO_URL=$REPO_URL" "NEW_USER=$NEW_USER" "MC_THEMES=$MC_THEMES" "WSL_DISTRO_NAME=${WSL_DISTRO_NAME:-}" bash "$SCRIPT_PATH" "$@"
     fi
   fi
   if ((! DRY_RUN)); then
@@ -1590,6 +1644,7 @@ main() {
   echo
   print_failed
   ((DRY_RUN)) && log "Simulação concluída: nada foi alterado."
+  wsl_restart_hint
   finish_session "Pronto. Entre como $NEW_USER (faça login ou rode: su - $NEW_USER)."
 }
 
