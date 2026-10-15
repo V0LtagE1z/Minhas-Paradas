@@ -6,7 +6,8 @@
 #
 # Distros de desktop: rode como root (ou com sudo). O script
 #   0. só no Arch puro: ranqueia os mirrors com o rate-mirrors e atualiza o sistema (pacman -Syyu);
-#   1. instala os pacotes do sistema;
+#   1. instala os pacotes do sistema e gera os locales pt_BR.UTF-8 e en_US.UTF-8
+#      (locale.conf: LANG=pt_BR.UTF-8, LC_MESSAGES=en_US.UTF-8);
 #   2. cria o usuário "gustavo" (home /home/gustavo, shell zsh, grupos wheel/audio/video)
 #      e troca o shell do root para zsh;
 #   3. dá sudo a ele e pede a senha dele;
@@ -81,6 +82,13 @@ WSL_CONF_FILE="${WSL_CONF_FILE:-/etc/wsl.conf}"
 # WSL_SET_DEFAULT_USER=0 não mexe no wsl.conf.
 WSL_SET_DEFAULT_USER="${WSL_SET_DEFAULT_USER:-1}"
 WSL_USER_CHANGED=0   # 1 = o wsl.conf mudou nesta execução (a distro precisa ser reiniciada pelo Windows)
+
+# Locales do sistema (desktop e WSL): gera pt_BR e en_US e grava LANG/LC_MESSAGES no locale.conf.
+# SKIP_LOCALES=1 pula a etapa. SYS_LANG e SYS_LC_MESSAGES trocam os valores.
+SYS_LANG="${SYS_LANG:-pt_BR.UTF-8}"
+SYS_LC_MESSAGES="${SYS_LC_MESSAGES:-en_US.UTF-8}"
+LOCALE_CONF_FILE="${LOCALE_CONF_FILE:-/etc/locale.conf}"
+LOCALE_DEFAULT_FILE="${LOCALE_DEFAULT_FILE:-/etc/default/locale}"   # Debian/Ubuntu
 PACMAN_CONF="${PACMAN_CONF:-/etc/pacman.conf}"
 ROOT_PREFIX="${ROOT_PREFIX:-}"   # só para testes: prefixo dos /etc e /usr/lib lidos por detect_zshrc_family
 UNAME_O="${UNAME_O:-}"           # só para testes: substitui "uname -o" em detect_zshrc_termux
@@ -193,6 +201,7 @@ No fim o script pergunta se você quer encerrar a sessão (fecha o shell que cha
 
 Variáveis úteis: NEW_USER (padrão: gustavo), REPO_URL, REPO_DIR,
                  FORCE_PROOT=1 (força o modo proot se a detecção falhar),
+                 SKIP_LOCALES=1 (não gera os locales nem escreve o locale.conf; desktop e WSL),
                  FORCE_WSL=1 (força o modo WSL) ou FORCE_WSL=0 (desliga a detecção de WSL),
                  WSL_SET_DEFAULT_USER=0 (no WSL, não define $NEW_USER como usuário padrão no wsl.conf),
                  WSL_INSTALL_GUI=1 (no WSL, instala também Kitty e a fonte MesloLGS NF no Linux),
@@ -545,6 +554,80 @@ gen_locales() {  # o .zshrc usa pt_BR.UTF-8 e en_US.UTF-8; rootfs mínimo costum
   if ((changed)); then run $SUDO locale-gen && log "locales pt_BR e en_US geradas" || warn "locale-gen falhou"; fi
 }
 
+# ─── Locales do sistema (desktop, WSL incluído) ───────────────────────────────
+# Gera pt_BR.UTF-8 e en_US.UTF-8 e grava no locale.conf do sistema:
+#   LANG=pt_BR.UTF-8 e LC_MESSAGES=en_US.UTF-8 (o mesmo que o .zshrc exporta, agora valendo para o sistema todo).
+# Onde os locales vêm de cada distro:
+#   Arch/Debian/Ubuntu: /etc/locale.gen + locale-gen (Debian/Ubuntu: pacote locales)
+#   Fedora: pacotes glibc-langpack-en e glibc-langpack-pt (não tem locale-gen)
+#   openSUSE: pacote glibc-locale
+# Debian/Ubuntu leem /etc/default/locale no login, então ele também recebe as duas chaves.
+# Só mexe nas chaves LANG e LC_MESSAGES: as outras linhas do arquivo ficam como estão.
+have_locale() {  # ex.: have_locale pt_BR — o "locale -a" escreve pt_BR.utf8
+  local list
+  list=$(locale -a 2>/dev/null || true)   # sem pipe direto: com pipefail o grep -q daria 141 (SIGPIPE)
+  grep -qiE "^$1\.utf-?8\$" <<<"$list"
+}
+
+set_locale_var() {  # arquivo CHAVE VALOR — troca a linha CHAVE= ou acrescenta no fim
+  local f=$1 k=$2 v=$3
+  if [[ -f $f ]] && grep -qE "^[[:space:]]*${k}=" "$f"; then
+    run $SUDO sed -i -E "s|^[[:space:]]*${k}=.*|${k}=${v}|" "$f"
+  else
+    append_line "${k}=${v}" "$f"
+  fi
+}
+
+write_locale_conf() {
+  local f real files=("$LOCALE_CONF_FILE") seen=" "
+  [[ $PM == apt ]] && files+=("$LOCALE_DEFAULT_FILE")
+  for f in "${files[@]}"; do
+    # /etc/locale.conf pode ser um link para /etc/default/locale: edita o arquivo real, uma vez só
+    # (o sed -i trocaria o link por um arquivo comum).
+    real=$(readlink -f -- "$f" 2>/dev/null || echo "$f")
+    if [[ $seen == *" $real "* ]]; then continue; fi
+    seen+="$real "
+    if [[ -f $real && ! -e $real.setup.bak ]]; then run $SUDO cp -a "$real" "$real.setup.bak"; fi
+    set_locale_var "$real" LANG "$SYS_LANG"
+    set_locale_var "$real" LC_MESSAGES "$SYS_LC_MESSAGES"
+    log "locale do sistema em $real: LANG=$SYS_LANG, LC_MESSAGES=$SYS_LC_MESSAGES"
+  done
+}
+
+system_locales() {
+  is_desktop || return 0
+  if [[ ${SKIP_LOCALES:-0} == 1 ]]; then log "locales: etapa pulada (SKIP_LOCALES=1)"; return 0; fi
+  local p pkgs=()
+  case $PM in
+    apt)    pkgs=(locales) ;;
+    dnf)    pkgs=(glibc-langpack-en glibc-langpack-pt) ;;
+    zypper) pkgs=(glibc-locale) ;;
+  esac
+  for p in ${pkgs[@]+"${pkgs[@]}"}; do
+    if [[ $PM == apt ]]; then
+      # o pacote locales usa debconf: sem terminal interativo não pode travar numa pergunta
+      run $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y "$p" \
+        && log "pacote (locales): $p" || warn "falhou: $p (os locales podem não ser gerados)"
+    else
+      pm_install "$p" && log "pacote (locales): $p" || warn "falhou: $p (os locales podem não ser gerados)"
+    fi
+  done
+  gen_locales
+  if ((DRY_RUN)); then
+    log "confirmaria com 'locale -a' que pt_BR.UTF-8 e en_US.UTF-8 existem (e rodaria o locale-gen se faltar)"
+  elif command -v locale-gen >/dev/null; then
+    # gen_locales só roda o locale-gen quando mexe no locale.gen; aqui cobre o caso das linhas já ativas
+    # mas os locales nunca gerados.
+    if ! have_locale pt_BR || ! have_locale en_US; then
+      run $SUDO locale-gen || warn "locale-gen falhou"
+    fi
+  fi
+  if ((! DRY_RUN)) && command -v locale >/dev/null && { ! have_locale pt_BR || ! have_locale en_US; }; then
+    warn "pt_BR.UTF-8 ou en_US.UTF-8 não aparece em 'locale -a'; o locale.conf foi escrito mesmo assim, confira depois"
+  fi
+  write_locale_conf
+}
+
 prepare_proot_pacman() {
   # Só para distros com pacman dentro de proot (Arch Linux ARM e afins).
   ((PROOT)) && [[ $PM == pacman ]] || return 0
@@ -763,6 +846,7 @@ system_phase() {
   pm_update
   install_packages
   install_desktop_packages
+  system_locales
   ensure_sudo
   create_user
   set_root_shell

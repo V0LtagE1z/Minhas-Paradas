@@ -101,7 +101,9 @@ Nas distros de desktop, as etapas 1 a 3 rodam como root; depois o script cria o 
 
 1. Detecta o gerenciador de pacotes: `pkg` (Termux), `apt`, `dnf` ou `pacman`.
 2. Instala `zsh git curl fastfetch micro fzf zoxide`. Um pacote indisponível não interrompe o script, só aparece na lista de falhas no final.
-3. **Só em distros:** instala `kitty` e `fontconfig`.
+3. **Só em distros** (no WSL, sem `kitty` e `fontconfig`; veja a seção do WSL):
+   - Instala `kitty` e `fontconfig`.
+   - Gera os locales `pt_BR.UTF-8` e `en_US.UTF-8` do sistema e grava `LANG=pt_BR.UTF-8` e `LC_MESSAGES=en_US.UTF-8` em `/etc/locale.conf`. Arch e Debian/Ubuntu usam o `/etc/locale.gen` com `locale-gen` (Debian/Ubuntu instalam antes o pacote `locales`); Fedora instala `glibc-langpack-en` e `glibc-langpack-pt`; openSUSE instala `glibc-locale`. No Debian/Ubuntu o `/etc/default/locale` também recebe as duas chaves (é o que o login lê). Só `LANG` e `LC_MESSAGES` são tocados: as outras linhas do arquivo ficam, e a cópia original vai para `<arquivo>.setup.bak`. `SKIP_LOCALES=1` pula a etapa; `SYS_LANG` e `SYS_LC_MESSAGES` trocam os valores.
 4. No Arch/CachyOS, instala o `paru` (pelo repositório ou compilando o `paru` do AUR). O `paru-bin` não é usado: ele é pré-compilado e quebra (`libalpm.so.15: cannot open shared object file`) quando o pacman sobe de versão. Se já houver um `paru` que não executa, o script remove o `paru-bin` e recompila.
 5. Clona o oh-my-zsh, o powerlevel10k (em `~/powerlevel10k`) e os plugins `zsh-autosuggestions`, `fast-syntax-highlighting` e `zsh-history-substring-search`.
 6. Copia os dotfiles para o `$HOME`, cada ambiente da sua pasta:
