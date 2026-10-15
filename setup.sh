@@ -195,6 +195,7 @@ Variáveis úteis: NEW_USER (padrão: gustavo), REPO_URL, REPO_DIR,
                  FORCE_PROOT=1 (força o modo proot se a detecção falhar),
                  FORCE_WSL=1 (força o modo WSL) ou FORCE_WSL=0 (desliga a detecção de WSL),
                  WSL_SET_DEFAULT_USER=0 (no WSL, não define $NEW_USER como usuário padrão no wsl.conf),
+                 WSL_INSTALL_GUI=1 (no WSL, instala também Kitty e a fonte MesloLGS NF no Linux),
                  SKIP_MIRRORS=1 (não ranquear os mirrors no Arch),
                  FORCE_MIRRORS=1 (ranquear de novo mesmo se já foi feito),
                  MC_THEMES=1|0 (o mesmo que --temas-minecraft / --sem-temas-minecraft).
@@ -306,6 +307,11 @@ is_desktop() { [[ $PM != pkg && $PROOT != 1 ]]; }
 # Distro de desktop fora do WSL. É o que decide GRUB, Plymouth, initramfs e snapshot de boot.
 has_bootloader() { is_desktop && ((! WSL)); }
 
+# Terminal e fontes do próprio Linux (Kitty, MesloLGS NF)? No WSL o terminal é do Windows (Windows
+# Terminal etc.) e a fonte vem do Windows: instalar kitty/fontconfig/fontes aqui só ocupa espaço.
+# WSL_INSTALL_GUI=1 instala mesmo assim (ex.: quem usa apps gráficos pelo WSLg).
+has_linux_gui() { is_desktop && { ((! WSL)) || [[ ${WSL_INSTALL_GUI:-0} == 1 ]]; }; }
+
 detect_pm() {
   # Dentro do proot as variáveis do Termux podem vazar: o proot decide antes do Termux.
   if ((PROOT)); then
@@ -384,6 +390,10 @@ install_packages() {
 
 install_desktop_packages() {
   is_desktop || return 0   # Kitty e fontconfig não se aplicam ao Termux nem ao proot
+  if ! has_linux_gui; then
+    log "WSL: ${DESKTOP_PACKAGES[*]} pulados (o terminal e a fonte são os do Windows; WSL_INSTALL_GUI=1 instala mesmo assim)"
+    return 0
+  fi
   local p
   for p in "${DESKTOP_PACKAGES[@]}"; do
     if pm_install "$p"; then
@@ -742,8 +752,14 @@ wsl_restart_hint() {
   log "WSL: para entrar como root quando precisar: wsl -u root   (ou 'su -' / sudo de dentro do $NEW_USER)"
 }
 
+# WSL: a fonte do powerlevel10k precisa estar no Windows, que é quem desenha o terminal.
+wsl_font_hint() {
+  ((WSL)) && ! has_linux_gui || return 0
+  log "WSL: instale a fonte MesloLGS NF no Windows (4 .ttf em github.com/romkatv/powerlevel10k-media: Regular, Bold, Italic e Bold Italic; clique direito > Instalar) e escolha-a no Windows Terminal: Configurações > a distro > Aparência > Tipo de fonte. Sem isso o prompt do p10k mostra glifos quebrados."
+}
+
 system_phase() {
-  optimize_mirrors  # Arch puro: rate-mirrors + atualização completa, antes de qualquer outro pacote
+  optimize_mirrors # Arch puro: rate-mirrors + atualização completa, antes de qualquer outro pacote
   pm_update
   install_packages
   install_desktop_packages
@@ -1028,7 +1044,7 @@ deploy_dotfiles() {
 }
 
 deploy_kitty() {
-  is_desktop || return 0   # Kitty só em distro de desktop (não Termux, não proot)
+  has_linux_gui || return 0   # Kitty só em distro de desktop (não Termux, não proot, não WSL)
   run mkdir -p "$HOME/.config/kitty"
   backup_and_copy "$REPO_DIR/$DIR_KITTY/kitty.conf" "$HOME/.config/kitty/kitty.conf"
 }
@@ -1082,7 +1098,7 @@ termux_font() {
 }
 
 desktop_fonts() {
-  is_desktop || return 0   # no Termux a fonte é tratada em termux_font; no proot vale a do Termux
+  has_linux_gui || return 0   # no Termux a fonte é tratada em termux_font; no proot vale a do Termux; no WSL, a do Windows
   local dir="$HOME/.local/share/fonts/MesloLGS-NF"
   local base="https://github.com/romkatv/powerlevel10k-media/raw/master"
   local style file tmp installed=0 failed=0
@@ -1645,6 +1661,7 @@ main() {
   print_failed
   ((DRY_RUN)) && log "Simulação concluída: nada foi alterado."
   wsl_restart_hint
+  wsl_font_hint
   finish_session "Pronto. Entre como $NEW_USER (faça login ou rode: su - $NEW_USER)."
 }
 
