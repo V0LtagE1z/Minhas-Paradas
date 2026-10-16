@@ -6,7 +6,8 @@
 #
 # Distros de desktop: rode como root (ou com sudo). O script
 #   0. só no Arch puro: ranqueia os mirrors com o rate-mirrors e atualiza o sistema (pacman -Syyu);
-#   1. instala os pacotes do sistema;
+#   1. instala os pacotes do sistema e gera os locales pt_BR.UTF-8 e en_US.UTF-8
+#      (locale.conf: LANG=pt_BR.UTF-8, LC_MESSAGES=en_US.UTF-8);
 #   2. cria o usuário "gustavo" (home /home/gustavo, shell zsh, grupos wheel/audio/video)
 #      e troca o shell do root para zsh;
 #   3. dá sudo a ele e pede a senha dele;
@@ -21,6 +22,7 @@
 # Distros de desktop, opcional: instala os temas Minecraft (GRUB: minegrub-world-sel-theme;
 # Plymouth: minecraft-plymouth-theme). Pergunta no começo; --temas-minecraft / --sem-temas-minecraft
 # respondem por você. Só funciona com GRUB; em Limine/systemd-boot só o Plymouth é instalado.
+# No WSL (detectado sozinho) essa etapa é pulada: o Windows inicia o kernel, não há bootloader.
 # No fim, em qualquer ambiente, pergunta se você quer encerrar a sessão (fecha o shell que chamou o script).
 #
 # Use --dry-run para ver o que seria feito sem alterar nada.
@@ -72,6 +74,21 @@ OS_RELEASE_FILE="${OS_RELEASE_FILE:-}"
 KERNEL_RELEASE="${KERNEL_RELEASE:-}"
 ARCH_RELEASE_FILE="${ARCH_RELEASE_FILE:-/etc/arch-release}"
 PROC_STATUS_FILE="${PROC_STATUS_FILE:-/proc/self/status}"
+PROC_VERSION_FILE="${PROC_VERSION_FILE:-/proc/version}"
+WSL_INTEROP_FILE="${WSL_INTEROP_FILE:-/proc/sys/fs/binfmt_misc/WSLInterop}"   # o WSL2 novo usa também o sufixo -late
+WSL_RUN_DIR="${WSL_RUN_DIR:-/run/WSL}"
+WSL_CONF_FILE="${WSL_CONF_FILE:-/etc/wsl.conf}"
+# WSL: faz o WSL abrir direto como $NEW_USER (em vez de root) via [user] default= no wsl.conf.
+# WSL_SET_DEFAULT_USER=0 não mexe no wsl.conf.
+WSL_SET_DEFAULT_USER="${WSL_SET_DEFAULT_USER:-1}"
+WSL_USER_CHANGED=0   # 1 = o wsl.conf mudou nesta execução (a distro precisa ser reiniciada pelo Windows)
+
+# Locales do sistema (desktop e WSL): gera pt_BR e en_US e grava LANG/LC_MESSAGES no locale.conf.
+# SKIP_LOCALES=1 pula a etapa. SYS_LANG e SYS_LC_MESSAGES trocam os valores.
+SYS_LANG="${SYS_LANG:-pt_BR.UTF-8}"
+SYS_LC_MESSAGES="${SYS_LC_MESSAGES:-en_US.UTF-8}"
+LOCALE_CONF_FILE="${LOCALE_CONF_FILE:-/etc/locale.conf}"
+LOCALE_DEFAULT_FILE="${LOCALE_DEFAULT_FILE:-/etc/default/locale}"   # Debian/Ubuntu
 PACMAN_CONF="${PACMAN_CONF:-/etc/pacman.conf}"
 ROOT_PREFIX="${ROOT_PREFIX:-}"   # só para testes: prefixo dos /etc e /usr/lib lidos por detect_zshrc_family
 UNAME_O="${UNAME_O:-}"           # só para testes: substitui "uname -o" em detect_zshrc_termux
@@ -154,6 +171,8 @@ SUDO="sudo"
 FAILED=()
 PROOT=0         # 1 = rodando dentro de um proot (ex.: proot-distro no Termux), qualquer distro
 IS_ALARM=0      # 1 = Arch Linux ARM (só relevante junto com PROOT=1, para o keyring)
+WSL=0           # 1 = rodando no WSL1/WSL2 (sem bootloader próprio: o Windows é quem inicia o kernel)
+WSL_WHY=""      # o que levou a detectar o WSL (aparece no log)
 USER_PHASE=0    # 1 = chamado pelo próprio script, já como o novo usuário (interno)
 SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]:-$0}" 2>/dev/null || true)
 
@@ -173,7 +192,7 @@ usage() {
 Uso: bash setup.sh [--dry-run]
 
   --dry-run, -n           mostra o que seria feito (linhas [dry] e [sim]) sem alterar nada
-  --temas-minecraft       instala os temas Minecraft (GRUB + Plymouth) sem perguntar (só desktop)
+  --temas-minecraft       instala os temas Minecraft (GRUB + Plymouth) sem perguntar (só desktop; no WSL é ignorado)
   --sem-temas-minecraft   não instala e não pergunta pelos temas Minecraft
   --reverter-temas        desfaz os temas Minecraft (GRUB + Plymouth) e sai; não faz mais nada
   --help, -h              mostra esta ajuda
@@ -182,6 +201,10 @@ No fim o script pergunta se você quer encerrar a sessão (fecha o shell que cha
 
 Variáveis úteis: NEW_USER (padrão: gustavo), REPO_URL, REPO_DIR,
                  FORCE_PROOT=1 (força o modo proot se a detecção falhar),
+                 SKIP_LOCALES=1 (não gera os locales nem escreve o locale.conf; desktop e WSL),
+                 FORCE_WSL=1 (força o modo WSL) ou FORCE_WSL=0 (desliga a detecção de WSL),
+                 WSL_SET_DEFAULT_USER=0 (no WSL, não define $NEW_USER como usuário padrão no wsl.conf),
+                 WSL_INSTALL_GUI=1 (no WSL, instala também Kitty e a fonte MesloLGS NF no Linux),
                  SKIP_MIRRORS=1 (não ranquear os mirrors no Arch),
                  FORCE_MIRRORS=1 (ranquear de novo mesmo se já foi feito),
                  MC_THEMES=1|0 (o mesmo que --temas-minecraft / --sem-temas-minecraft).
@@ -244,8 +267,59 @@ detect_env() {
   fi
 }
 
+# Detecta o WSL (1 e 2). Ele não é uma VM comum: o Windows inicia o kernel direto, sem firmware,
+# sem bootloader e sem tela de boot, então GRUB, Plymouth e initramfs não fazem sentido lá.
+# Sinais, do mais para o menos confiável (qualquer um basta):
+#   1. "microsoft" ou "wsl" no kernel (uname -r: 5.15.x-microsoft-standard-WSL2; WSL1: 4.4.0-xxxxx-Microsoft)
+#      ou em /proc/version. Não depende de variável de ambiente, então sobrevive ao sudo/su;
+#   2. systemd-detect-virt devolve "wsl" (systemd 253 ou mais novo);
+#   3. /proc/sys/fs/binfmt_misc/WSLInterop (ou WSLInterop-late) e /run/WSL existem;
+#   4. WSL_DISTRO_NAME / WSL_INTEROP (o sudo costuma apagá-las, por isso são o último critério).
+# Kernel customizado (.wslconfig) que tire "microsoft" do nome ainda cai nos critérios 2 a 4.
+# FORCE_WSL=1 força o modo; FORCE_WSL=0 desliga a detecção (saída de emergência contra falso positivo).
+# Só vale para distro de desktop: Termux e proot decidem antes.
+detect_wsl() {
+  local kernel ver virt
+  WSL=0; WSL_WHY=""
+  case ${FORCE_WSL:-} in
+    0) return 0 ;;
+    1) WSL=1; WSL_WHY="FORCE_WSL=1"; return 0 ;;
+  esac
+  if ((PROOT)) || [[ $PM == pkg ]]; then return 0; fi
+
+  kernel=${KERNEL_RELEASE:-$(uname -r 2>/dev/null || true)}
+  ver=$(cat "$PROC_VERSION_FILE" 2>/dev/null || true)
+  virt=""
+  if command -v systemd-detect-virt >/dev/null 2>&1; then
+    virt=$(systemd-detect-virt 2>/dev/null || true)
+  fi
+
+  if [[ ${kernel,,} == *microsoft* || ${kernel,,} == *wsl* ]]; then
+    WSL_WHY="kernel \"$kernel\""
+  elif [[ ${ver,,} == *microsoft* || ${ver,,} == *wsl* ]]; then
+    WSL_WHY="$PROC_VERSION_FILE menciona Microsoft/WSL"
+  elif [[ $virt == wsl ]]; then
+    WSL_WHY="systemd-detect-virt: wsl"
+  elif [[ -e $WSL_INTEROP_FILE || -e $WSL_INTEROP_FILE-late || -d $WSL_RUN_DIR ]]; then
+    WSL_WHY="interop do WSL presente"
+  elif [[ -n ${WSL_DISTRO_NAME:-} || -n ${WSL_INTEROP:-} ]]; then
+    WSL_WHY="variáveis WSL_DISTRO_NAME/WSL_INTEROP"
+  fi
+  if [[ -n $WSL_WHY ]]; then WSL=1; fi
+  return 0
+}
+
 # Ambiente gráfico de verdade? (distro de desktop; não Termux e não proot)
 is_desktop() { [[ $PM != pkg && $PROOT != 1 ]]; }
+
+# Máquina que inicia o próprio kernel por um bootloader (GRUB, Limine, systemd-boot...)?
+# Distro de desktop fora do WSL. É o que decide GRUB, Plymouth, initramfs e snapshot de boot.
+has_bootloader() { is_desktop && ((! WSL)); }
+
+# Terminal e fontes do próprio Linux (Kitty, MesloLGS NF)? No WSL o terminal é do Windows (Windows
+# Terminal etc.) e a fonte vem do Windows: instalar kitty/fontconfig/fontes aqui só ocupa espaço.
+# WSL_INSTALL_GUI=1 instala mesmo assim (ex.: quem usa apps gráficos pelo WSLg).
+has_linux_gui() { is_desktop && { ((! WSL)) || [[ ${WSL_INSTALL_GUI:-0} == 1 ]]; }; }
 
 detect_pm() {
   # Dentro do proot as variáveis do Termux podem vazar: o proot decide antes do Termux.
@@ -325,6 +399,10 @@ install_packages() {
 
 install_desktop_packages() {
   is_desktop || return 0   # Kitty e fontconfig não se aplicam ao Termux nem ao proot
+  if ! has_linux_gui; then
+    log "WSL: ${DESKTOP_PACKAGES[*]} pulados (o terminal e a fonte são os do Windows; WSL_INSTALL_GUI=1 instala mesmo assim)"
+    return 0
+  fi
   local p
   for p in "${DESKTOP_PACKAGES[@]}"; do
     if pm_install "$p"; then
@@ -474,6 +552,80 @@ gen_locales() {  # o .zshrc usa pt_BR.UTF-8 e en_US.UTF-8; rootfs mínimo costum
     changed=1
   done
   if ((changed)); then run $SUDO locale-gen && log "locales pt_BR e en_US geradas" || warn "locale-gen falhou"; fi
+}
+
+# ─── Locales do sistema (desktop, WSL incluído) ───────────────────────────────
+# Gera pt_BR.UTF-8 e en_US.UTF-8 e grava no locale.conf do sistema:
+#   LANG=pt_BR.UTF-8 e LC_MESSAGES=en_US.UTF-8 (o mesmo que o .zshrc exporta, agora valendo para o sistema todo).
+# Onde os locales vêm de cada distro:
+#   Arch/Debian/Ubuntu: /etc/locale.gen + locale-gen (Debian/Ubuntu: pacote locales)
+#   Fedora: pacotes glibc-langpack-en e glibc-langpack-pt (não tem locale-gen)
+#   openSUSE: pacote glibc-locale
+# Debian/Ubuntu leem /etc/default/locale no login, então ele também recebe as duas chaves.
+# Só mexe nas chaves LANG e LC_MESSAGES: as outras linhas do arquivo ficam como estão.
+have_locale() {  # ex.: have_locale pt_BR — o "locale -a" escreve pt_BR.utf8
+  local list
+  list=$(locale -a 2>/dev/null || true)   # sem pipe direto: com pipefail o grep -q daria 141 (SIGPIPE)
+  grep -qiE "^$1\.utf-?8\$" <<<"$list"
+}
+
+set_locale_var() {  # arquivo CHAVE VALOR — troca a linha CHAVE= ou acrescenta no fim
+  local f=$1 k=$2 v=$3
+  if [[ -f $f ]] && grep -qE "^[[:space:]]*${k}=" "$f"; then
+    run $SUDO sed -i -E "s|^[[:space:]]*${k}=.*|${k}=${v}|" "$f"
+  else
+    append_line "${k}=${v}" "$f"
+  fi
+}
+
+write_locale_conf() {
+  local f real files=("$LOCALE_CONF_FILE") seen=" "
+  [[ $PM == apt ]] && files+=("$LOCALE_DEFAULT_FILE")
+  for f in "${files[@]}"; do
+    # /etc/locale.conf pode ser um link para /etc/default/locale: edita o arquivo real, uma vez só
+    # (o sed -i trocaria o link por um arquivo comum).
+    real=$(readlink -f -- "$f" 2>/dev/null || echo "$f")
+    if [[ $seen == *" $real "* ]]; then continue; fi
+    seen+="$real "
+    if [[ -f $real && ! -e $real.setup.bak ]]; then run $SUDO cp -a "$real" "$real.setup.bak"; fi
+    set_locale_var "$real" LANG "$SYS_LANG"
+    set_locale_var "$real" LC_MESSAGES "$SYS_LC_MESSAGES"
+    log "locale do sistema em $real: LANG=$SYS_LANG, LC_MESSAGES=$SYS_LC_MESSAGES"
+  done
+}
+
+system_locales() {
+  is_desktop || return 0
+  if [[ ${SKIP_LOCALES:-0} == 1 ]]; then log "locales: etapa pulada (SKIP_LOCALES=1)"; return 0; fi
+  local p pkgs=()
+  case $PM in
+    apt)    pkgs=(locales) ;;
+    dnf)    pkgs=(glibc-langpack-en glibc-langpack-pt) ;;
+    zypper) pkgs=(glibc-locale) ;;
+  esac
+  for p in ${pkgs[@]+"${pkgs[@]}"}; do
+    if [[ $PM == apt ]]; then
+      # o pacote locales usa debconf: sem terminal interativo não pode travar numa pergunta
+      run $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y "$p" \
+        && log "pacote (locales): $p" || warn "falhou: $p (os locales podem não ser gerados)"
+    else
+      pm_install "$p" && log "pacote (locales): $p" || warn "falhou: $p (os locales podem não ser gerados)"
+    fi
+  done
+  gen_locales
+  if ((DRY_RUN)); then
+    log "confirmaria com 'locale -a' que pt_BR.UTF-8 e en_US.UTF-8 existem (e rodaria o locale-gen se faltar)"
+  elif command -v locale-gen >/dev/null; then
+    # gen_locales só roda o locale-gen quando mexe no locale.gen; aqui cobre o caso das linhas já ativas
+    # mas os locales nunca gerados.
+    if ! have_locale pt_BR || ! have_locale en_US; then
+      run $SUDO locale-gen || warn "locale-gen falhou"
+    fi
+  fi
+  if ((! DRY_RUN)) && command -v locale >/dev/null && { ! have_locale pt_BR || ! have_locale en_US; }; then
+    warn "pt_BR.UTF-8 ou en_US.UTF-8 não aparece em 'locale -a'; o locale.conf foi escrito mesmo assim, confira depois"
+  fi
+  write_locale_conf
 }
 
 prepare_proot_pacman() {
@@ -636,16 +788,71 @@ run_user_phase() {
   cleanup
 }
 
+# WSL: o login automático no usuário novo é o [user] default= do /etc/wsl.conf. Mantém as outras
+# seções e chaves do arquivo, troca (ou cria) só o default= da seção [user] e guarda a cópia original
+# em wsl.conf.setup.bak (só na primeira vez). O WSL só lê o wsl.conf ao iniciar a distro: a mudança vale
+# depois de "wsl --terminate <distro>" (ou "wsl --shutdown") rodado pelo Windows.
+wsl_default_user() {
+  ((WSL)) || return 0
+  if [[ $WSL_SET_DEFAULT_USER != 1 ]]; then
+    log "WSL: usuário padrão não alterado (WSL_SET_DEFAULT_USER=$WSL_SET_DEFAULT_USER)"
+    return 0
+  fi
+  local conf=$WSL_CONF_FILE tmp
+  tmp=$(mktemp); CLEANUP_FILES+=("$tmp")
+  if [[ -f $conf ]]; then
+    awk -v user="$NEW_USER" '
+      function trim(s) { gsub(/^[ \t\r]+|[ \t\r]+$/, "", s); return s }
+      { t = trim($0) }
+      t ~ /^\[.*\]$/ {
+        if (insec && !done) { print "default=" user; done = 1 }   # [user] acabou sem default=
+        insec = (tolower(t) == "[user]"); if (insec) seen = 1
+        print; next
+      }
+      insec && !done && t ~ /^default[ \t]*=/ { print "default=" user; done = 1; next }
+      { print }
+      END {
+        if (insec && !done) print "default=" user
+        else if (!seen) { if (NR > 0) print ""; print "[user]"; print "default=" user }
+      }' "$conf" > "$tmp"
+  else
+    printf '[user]\ndefault=%s\n' "$NEW_USER" > "$tmp"
+  fi
+  if [[ -f $conf && $(<"$tmp") == "$(<"$conf")" ]]; then
+    log "WSL: $conf já define o usuário padrão $NEW_USER"
+    return 0
+  fi
+  if [[ -f $conf && ! -e $conf.setup.bak ]]; then run $SUDO cp -a "$conf" "$conf.setup.bak"; fi
+  run $SUDO install -m 644 "$tmp" "$conf"
+  log "WSL: $conf agora define [user] default=$NEW_USER"
+  WSL_USER_CHANGED=1
+}
+
+# Avisa como aplicar a mudança do wsl.conf (o shell que está rodando o script continua sendo o antigo).
+wsl_restart_hint() {
+  ((WSL_USER_CHANGED)) || return 0
+  log "WSL: para abrir já como $NEW_USER, reinicie a distro pelo Windows (PowerShell ou cmd): wsl --terminate ${WSL_DISTRO_NAME:-<nome-da-distro>}   (veja o nome em: wsl -l -v; ou use wsl --shutdown)"
+  log "WSL: para entrar como root quando precisar: wsl -u root   (ou 'su -' / sudo de dentro do $NEW_USER)"
+}
+
+# WSL: a fonte do powerlevel10k precisa estar no Windows, que é quem desenha o terminal.
+wsl_font_hint() {
+  ((WSL)) && ! has_linux_gui || return 0
+  log "WSL: instale a fonte MesloLGS NF no Windows (4 .ttf em github.com/romkatv/powerlevel10k-media: Regular, Bold, Italic e Bold Italic; clique direito > Instalar) e escolha-a no Windows Terminal: Configurações > a distro > Aparência > Tipo de fonte. Sem isso o prompt do p10k mostra glifos quebrados."
+}
+
 system_phase() {
-  optimize_mirrors   # Arch puro: rate-mirrors + atualização completa, antes de qualquer outro pacote
+  optimize_mirrors # Arch puro: rate-mirrors + atualização completa, antes de qualquer outro pacote
   pm_update
   install_packages
   install_desktop_packages
+  system_locales
   ensure_sudo
   create_user
   set_root_shell
   configure_sudo
   set_password
+  wsl_default_user || warn "WSL: não consegui definir $NEW_USER como usuário padrão em $WSL_CONF_FILE"
   run_user_phase
   # Por último: mexe no bootloader/initramfs e uma falha aqui não pode atrapalhar o setup principal.
   minecraft_themes || warn "os temas Minecraft não foram concluídos"
@@ -921,7 +1128,7 @@ deploy_dotfiles() {
 }
 
 deploy_kitty() {
-  is_desktop || return 0   # Kitty só em distro de desktop (não Termux, não proot)
+  has_linux_gui || return 0   # Kitty só em distro de desktop (não Termux, não proot, não WSL)
   run mkdir -p "$HOME/.config/kitty"
   backup_and_copy "$REPO_DIR/$DIR_KITTY/kitty.conf" "$HOME/.config/kitty/kitty.conf"
 }
@@ -975,7 +1182,7 @@ termux_font() {
 }
 
 desktop_fonts() {
-  is_desktop || return 0   # no Termux a fonte é tratada em termux_font; no proot vale a do Termux
+  has_linux_gui || return 0   # no Termux a fonte é tratada em termux_font; no proot vale a do Termux; no WSL, a do Windows
   local dir="$HOME/.local/share/fonts/MesloLGS-NF"
   local base="https://github.com/romkatv/powerlevel10k-media/raw/master"
   local style file tmp installed=0 failed=0
@@ -1118,6 +1325,14 @@ GRUB_OK=0
 GRUB_DIR=""; GRUB_CFG=""; GRUB_MKCONFIG=""
 
 decide_minecraft_themes() {
+  # WSL: sem bootloader nem tela de boot, não há o que tematizar (e o initramfs nem é usado).
+  if ((WSL)); then
+    if [[ $MC_THEMES == 1 ]]; then
+      warn "WSL: --temas-minecraft ignorado (o Windows inicia o kernel; não existe GRUB nem Plymouth aqui)"
+    fi
+    MC_THEMES=0
+    return 0
+  fi
   is_desktop || { MC_THEMES=0; return 0; }
   case $MC_THEMES in 1|0) return 0 ;; esac
   if ((DRY_RUN)); then
@@ -1315,7 +1530,7 @@ mc_plymouth_theme() {  # pasta do clone
 }
 
 minecraft_themes() {
-  [[ $MC_THEMES == 1 ]] && is_desktop || return 0
+  [[ $MC_THEMES == 1 ]] && has_bootloader || return 0
   if ((! DRY_RUN)); then
     command -v git >/dev/null || { warn "git não encontrado; temas Minecraft pulados"; return 1; }
   fi
@@ -1457,6 +1672,10 @@ main() {
 
   detect_env
   detect_pm
+  detect_wsl
+  if ((WSL)); then
+    log "WSL detectado ($WSL_WHY): sem bootloader próprio, então GRUB, Plymouth e initramfs (temas Minecraft) serão pulados"
+  fi
 
   if ((REVERT_MC)) && ! is_desktop; then die "--reverter-temas só vale para distros de desktop (os temas não são instalados no Termux nem no proot)."; fi
 
@@ -1506,7 +1725,7 @@ main() {
     else
       [[ -f $SCRIPT_PATH ]] || die "Salve o script em disco e rode: bash setup.sh"
       log "Reexecutando com sudo"
-      exec sudo env "REPO_URL=$REPO_URL" "NEW_USER=$NEW_USER" "MC_THEMES=$MC_THEMES" bash "$SCRIPT_PATH" "$@"
+      exec sudo env "REPO_URL=$REPO_URL" "NEW_USER=$NEW_USER" "MC_THEMES=$MC_THEMES" "WSL_DISTRO_NAME=${WSL_DISTRO_NAME:-}" bash "$SCRIPT_PATH" "$@"
     fi
   fi
   if ((! DRY_RUN)); then
@@ -1525,6 +1744,8 @@ main() {
   echo
   print_failed
   ((DRY_RUN)) && log "Simulação concluída: nada foi alterado."
+  wsl_restart_hint
+  wsl_font_hint
   finish_session "Pronto. Entre como $NEW_USER (faça login ou rode: su - $NEW_USER)."
 }
 
