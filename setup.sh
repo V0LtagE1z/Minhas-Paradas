@@ -226,6 +226,7 @@ Variáveis úteis: NEW_USER (padrão: gustavo), REPO_URL, REPO_DIR,
                  FORCE_MIRRORS=1 (ranquear de novo mesmo se já foi feito),
                  SKIP_PACMAN_REPOS=1 (não mexer em core/extra/multilib no pacman.conf),
                  CACHYOS_REPO=auto|1|0 (repositórios do CachyOS: só Arch/EndeavourOS | forçar | pular),
+                 CACHYOS_SEM_SNAPSHOT=1 (instala os repos do CachyOS mesmo sem poder tirar snapshot do snapper),
                  MC_THEMES=1|0 (o mesmo que --temas-minecraft / --sem-temas-minecraft).
 EOF
 }
@@ -569,6 +570,14 @@ enable_pacman_repos() {
   if cmp -s "$conf" "$tmp"; then
     log "pacman.conf: core, extra e multilib já estão habilitados"; return 0
   fi
+  # Um Include para um arquivo que não existe quebra o pacman inteiro ("could not open file").
+  if [[ ! -r $PACMAN_MIRRORLIST_INCLUDE ]]; then
+    if ((DRY_RUN)); then warn "$PACMAN_MIRRORLIST_INCLUDE não existe aqui (na execução real o script não mexeria no $conf)"
+    else
+      warn "$PACMAN_MIRRORLIST_INCLUDE não existe; não vou apontar [core]/[extra]/[multilib] para ele. Ajuste PACMAN_MIRRORLIST_INCLUDE e rode de novo"
+      return 0
+    fi
+  fi
 
   if ((DRY_RUN)); then
     log "pacman.conf: habilitaria core, extra e multilib (mudanças em $conf):"
@@ -602,6 +611,33 @@ sync_pacman_repos() {
 #   tar xvf cachyos-repo.tar.xz && cd cachyos-repo && sudo ./cachyos-repo.sh
 # O cachyos-repo.sh detecta o nível da CPU (x86-64-v3/v4/znver4) e mexe no pacman.conf sozinho.
 # Roda com o terminal ligado, então qualquer pergunta dele chega até você.
+#
+# O cachyos-repo.sh troca o pacman pelo fork do CachyOS e o -Syu seguinte pode trocar boa parte do
+# sistema por builds otimizadas (x86-64-v3/v4/znver4): difícil de desfazer. Por isso, logo antes de
+# rodá-lo, o script tira um snapshot do snapper (config "root"). Sem snapper, sem a config "root"
+# (ex.: raiz em ext4) ou se o snapshot falhar, pergunta se quer continuar (padrão: não; sem terminal
+# a resposta é não e a etapa é pulada). CACHYOS_SEM_SNAPSHOT=1 continua sem perguntar.
+CACHYOS_SEM_SNAPSHOT="${CACHYOS_SEM_SNAPSHOT:-0}"
+
+snapper_ready() {  # snapper instalado e com a config "root"?
+  command -v snapper >/dev/null || return 1
+  snapper list-configs 2>/dev/null | grep -qE '^root[[:space:]]'
+}
+
+cachyos_snapshot_gate() {  # 0 = pode rodar o cachyos-repo.sh; 1 = pular a etapa
+  if snapper_ready; then
+    log "snapper: snapshot antes de instalar os repositórios do CachyOS"
+    if run $SUDO snapper -c root create -d "setup.sh: antes dos repositórios do CachyOS"; then return 0; fi
+    warn "snapper: o snapshot falhou"
+  else
+    warn "snapper: não está instalado ou não tem a config 'root' (raiz em btrfs com snapper); não dá para tirar snapshot"
+  fi
+  if [[ $CACHYOS_SEM_SNAPSHOT == 1 ]]; then warn "seguindo sem snapshot (CACHYOS_SEM_SNAPSHOT=1)"; return 0; fi
+  if ((DRY_RUN)); then log "(sem snapshot: o script perguntaria se quer continuar mesmo assim)"; return 0; fi
+  warn "o cachyos-repo.sh troca o pacman pelo fork do CachyOS e atualiza o sistema para pacotes otimizados; sem snapshot não há volta fácil"
+  ask_yn "Continuar sem snapshot?" n
+}
+
 setup_cachyos_repo() {
   [[ $PM == pacman ]] && is_desktop || return 0
   if [[ $CACHYOS_REPO == 0 ]]; then log "CachyOS: etapa pulada (--sem-cachyos-repo)"; return 0; fi
@@ -633,6 +669,7 @@ setup_cachyos_repo() {
   if ((DRY_RUN)); then
     run curl -fL --retry 3 --connect-timeout 20 -o /tmp/cachyos-repo.XXXXXX/cachyos-repo.tar.xz "$CACHYOS_REPO_URL"
     run tar -xf /tmp/cachyos-repo.XXXXXX/cachyos-repo.tar.xz -C /tmp/cachyos-repo.XXXXXX
+    cachyos_snapshot_gate || { log "CachyOS: pulado (sem snapshot)"; return 0; }
     log "(entraria na pasta cachyos-repo extraída e executaria:)"
     run $SUDO ./cachyos-repo.sh
     PACMAN_REPOS_CHANGED=1; PACMAN_SYNCED=0
@@ -648,6 +685,8 @@ setup_cachyos_repo() {
     warn "CachyOS: o pacote baixado não tem cachyos-repo/cachyos-repo.sh; pulando"; FAILED+=("cachyos-repo"); return 0
   fi
   chmod +x "$tmp/cachyos-repo/cachyos-repo.sh"
+  # Último ponto de volta: daqui em diante o pacman e o sistema inteiro mudam.
+  cachyos_snapshot_gate || { log "CachyOS: pulado (sem snapshot)"; return 0; }
   if ! (cd "$tmp/cachyos-repo" && $SUDO ./cachyos-repo.sh); then
     warn "CachyOS: o cachyos-repo.sh terminou com erro; confira o $PACMAN_CONF"; FAILED+=("cachyos-repo"); return 0
   fi
@@ -1563,8 +1602,7 @@ mc_clone() {  # url destino
 }
 
 mc_snapshot() {
-  command -v snapper >/dev/null || return 0
-  snapper list-configs 2>/dev/null | grep -qE '^root[[:space:]]' || return 0
+  snapper_ready || return 0
   log "snapper: snapshot antes de mexer no bootloader/initramfs"
   run $SUDO snapper -c root create -d "setup.sh: antes dos temas Minecraft" \
     || warn "o snapshot falhou; seguindo sem ele"
@@ -1913,7 +1951,7 @@ main() {
     else
       [[ -f $SCRIPT_PATH ]] || die "Salve o script em disco e rode: bash setup.sh"
       log "Reexecutando com sudo"
-      exec sudo env "REPO_URL=$REPO_URL" "NEW_USER=$NEW_USER" "MC_THEMES=$MC_THEMES" "SKIP_PACMAN_REPOS=$SKIP_PACMAN_REPOS" "CACHYOS_REPO=$CACHYOS_REPO" "WSL_DISTRO_NAME=${WSL_DISTRO_NAME:-}" bash "$SCRIPT_PATH" "$@"
+      exec sudo env "REPO_URL=$REPO_URL" "NEW_USER=$NEW_USER" "MC_THEMES=$MC_THEMES" "SKIP_PACMAN_REPOS=$SKIP_PACMAN_REPOS" "CACHYOS_REPO=$CACHYOS_REPO" "CACHYOS_SEM_SNAPSHOT=$CACHYOS_SEM_SNAPSHOT" "PACMAN_MIRRORLIST_INCLUDE=$PACMAN_MIRRORLIST_INCLUDE" "WSL_DISTRO_NAME=${WSL_DISTRO_NAME:-}" bash "$SCRIPT_PATH" "$@"
     fi
   fi
   if ((! DRY_RUN)); then
