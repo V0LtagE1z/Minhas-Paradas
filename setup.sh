@@ -338,7 +338,7 @@ detect_pm() {
   elif command -v zypper >/dev/null;  then PM=zypper
   elif command -v dnf >/dev/null;     then PM=dnf
   elif command -v pacman >/dev/null;  then PM=pacman
-  else die "Gerenciador de pacotes não suportado (emerge não está incluído)."
+  else die "Gerenciador de pacotes não suportado."
   fi
 
   # Root não precisa de sudo; no proot o sudo não é usado (setuid não funciona lá).
