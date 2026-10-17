@@ -5,7 +5,9 @@
 # sem sudo, paru, Kitty nem fontes (a fonte é a do próprio Termux).
 #
 # Distros de desktop: rode como root (ou com sudo). O script
-#   0. só no Arch puro: ranqueia os mirrors com o rate-mirrors e atualiza o sistema (pacman -Syyu);
+#   0. no Arch e derivadas (pacman): garante core, extra e multilib habilitados no pacman.conf;
+#      só no Arch puro: ranqueia os mirrors com o rate-mirrors, atualiza o sistema (pacman -Syyu)
+#      e instala os repositórios do CachyOS (script oficial cachyos-repo.sh);
 #   1. instala os pacotes do sistema e gera os locales pt_BR.UTF-8 e en_US.UTF-8
 #      (locale.conf: LANG=pt_BR.UTF-8, LC_MESSAGES=en_US.UTF-8);
 #   2. cria o usuário "gustavo" (home /home/gustavo, shell zsh, grupos wheel/audio/video)
@@ -50,6 +52,19 @@ NEW_GROUPS=(wheel audio video)   # no proot vira (audio video): sem sudo, o whee
 SKIP_MIRRORS="${SKIP_MIRRORS:-0}"
 FORCE_MIRRORS="${FORCE_MIRRORS:-0}"
 MIRRORLIST_FILE="${MIRRORLIST_FILE:-/etc/pacman.d/mirrorlist}"
+
+# Arch e derivadas (desktop): deixa [core], [extra] e [multilib] habilitados no pacman.conf.
+# SKIP_PACMAN_REPOS=1 pula a etapa. O Include das seções é PACMAN_MIRRORLIST_INCLUDE.
+SKIP_PACMAN_REPOS="${SKIP_PACMAN_REPOS:-0}"
+PACMAN_MIRRORLIST_INCLUDE="${PACMAN_MIRRORLIST_INCLUDE:-/etc/pacman.d/mirrorlist}"
+PACMAN_REPOS_CHANGED=0   # 1 = o pacman.conf mudou e os bancos de dados ainda não foram sincronizados
+PACMAN_SYNCED=0          # 1 = um pacman -Syu/-Syyu completo já rodou depois da última mudança
+
+# Repositórios do CachyOS (script oficial cachyos-repo.sh, de https://github.com/CachyOS/linux-cachyos):
+#   auto = só no Arch puro (ID=arch) em x86_64 (padrão); 1 = tenta em qualquer distro com pacman em x86_64
+#   (menos no próprio CachyOS); 0 = pula. Também: --cachyos-repo e --sem-cachyos-repo.
+CACHYOS_REPO="${CACHYOS_REPO:-auto}"
+CACHYOS_REPO_URL="${CACHYOS_REPO_URL:-https://mirror.cachyos.org/cachyos-repo.tar.xz}"
 
 # Pacotes (o nome é igual em todos os gerenciadores; a exceção é o micro no zypper, tratada em pm_install). Adicione os outros aqui.
 PACKAGES=(zsh git curl fastfetch micro fzf zoxide)
@@ -195,6 +210,8 @@ Uso: bash setup.sh [--dry-run]
   --temas-minecraft       instala os temas Minecraft (GRUB + Plymouth) sem perguntar (só desktop; no WSL é ignorado)
   --sem-temas-minecraft   não instala e não pergunta pelos temas Minecraft
   --reverter-temas        desfaz os temas Minecraft (GRUB + Plymouth) e sai; não faz mais nada
+  --cachyos-repo          instala os repositórios do CachyOS mesmo em derivadas fora da lista automática
+  --sem-cachyos-repo      não instala os repositórios do CachyOS
   --help, -h              mostra esta ajuda
 
 No fim o script pergunta se você quer encerrar a sessão (fecha o shell que chamou o script).
@@ -207,6 +224,9 @@ Variáveis úteis: NEW_USER (padrão: gustavo), REPO_URL, REPO_DIR,
                  WSL_INSTALL_GUI=1 (no WSL, instala também Kitty e a fonte MesloLGS NF no Linux),
                  SKIP_MIRRORS=1 (não ranquear os mirrors no Arch),
                  FORCE_MIRRORS=1 (ranquear de novo mesmo se já foi feito),
+                 SKIP_PACMAN_REPOS=1 (não mexer em core/extra/multilib no pacman.conf),
+                 CACHYOS_REPO=auto|1|0 (repositórios do CachyOS: só Arch/EndeavourOS | forçar | pular),
+                 CACHYOS_SEM_SNAPSHOT=1 (instala os repos do CachyOS mesmo sem poder tirar snapshot do snapper),
                  MC_THEMES=1|0 (o mesmo que --temas-minecraft / --sem-temas-minecraft).
 EOF
 }
@@ -220,6 +240,8 @@ parse_args() {
       --temas-minecraft)      MC_THEMES=1 ;;
       --sem-temas-minecraft)  MC_THEMES=0 ;;
       --reverter-temas)       REVERT_MC=1 ;;
+      --cachyos-repo)         CACHYOS_REPO=1 ;;
+      --sem-cachyos-repo)     CACHYOS_REPO=0 ;;
       -h|--help)    usage; exit 0 ;;
       *)            die "Opção desconhecida: $a (veja: bash setup.sh --help)" ;;
     esac
@@ -435,6 +457,7 @@ optimize_mirrors() {
     run $SUDO install -m 644 /tmp/mirrorlist.novo "$MIRRORLIST_FILE"
     # -yy só se justifica logo após trocar de mirror, e SEMPRE junto com -u (senão é update parcial).
     run $SUDO pacman -Syyu --noconfirm
+    PACMAN_SYNCED=1
     return 0
   fi
 
@@ -469,7 +492,208 @@ optimize_mirrors() {
   log "Atualizando o sistema a partir dos novos mirrors (pacman -Syyu)..."
   $SUDO pacman -Syyu --noconfirm \
     || die "pacman -Syyu falhou. Rode 'pacman -Syu' manualmente até funcionar e execute o script de novo."
+  PACMAN_SYNCED=1
   log "sistema atualizado (se o kernel mudou, reinicie no fim)"
+}
+
+# ─── pacman.conf: core, extra e multilib (Arch e derivadas, desktop) ──────────
+os_id() {  # imprime o ID= do os-release em minúsculas, sem aspas (vazio se não achar)
+  local f=${OS_RELEASE_FILE:-/etc/os-release}
+  [[ -r $f ]] || f=/usr/lib/os-release
+  [[ -r $f ]] || return 0
+  sed -nE 's/^ID="?([^"]*)"?[[:space:]]*$/\1/p' "$f" | head -1 | tr '[:upper:]' '[:lower:]'
+}
+
+# Garante que [core], [extra] e [multilib] existam, ativos e com uma fonte de mirrors:
+#   - seção comentada (#[multilib])      -> descomenta o cabeçalho e o "#Include";
+#   - seção ativa sem Include/Server     -> descomenta o "#Include" dela ou insere "Include = ...";
+#   - seção ausente                      -> acrescenta no fim do arquivo.
+# Seções que já têm Include ou Server ativos não são tocadas (roda quantas vezes quiser).
+# A edição é feita numa cópia temporária; só substitui o pacman.conf se algo mudou.
+pacman_conf_enable_repos() {  # arquivo-entrada → imprime o arquivo novo no stdout
+  awk -v inc="$PACMAN_MIRRORLIST_INCLUDE" '
+    function norm(s) { gsub(/[ \t\r]/, "", s); return s }
+    function is_hdr(v)  { return v ~ /^\[[^]]+\]$/ }
+    function is_chdr(v) { return v ~ /^#\[[^]]+\]$/ }
+    { line[++n] = $0 }
+    END {
+      split("core extra multilib", repos, " ")
+      for (r = 1; r <= 3; r++) {
+        name = repos[r]; hdr = 0; chdr = 0
+        for (i = 1; i <= n; i++) {
+          v = norm(line[i])
+          if (v == "[" name "]") { hdr = i; break }
+          if (!chdr && v == "#[" name "]") chdr = i
+        }
+        if (!hdr && chdr) { line[chdr] = "[" name "]"; hdr = chdr }
+        if (!hdr) {
+          if (n > 0 && norm(line[n]) != "") line[++n] = ""
+          line[++n] = "[" name "]"
+          line[++n] = "Include = " inc
+          continue
+        }
+        has = 0; cm = 0
+        for (j = hdr + 1; j <= n; j++) {
+          v = norm(line[j])
+          if (is_hdr(v) || is_chdr(v)) break
+          if (v ~ /^(Include|Server)=/) { has = 1; break }
+          if (!cm && v ~ /^#Include=/) cm = j
+        }
+        if (!has) {
+          if (cm) sub(/^[ \t]*#[ \t]*/, "", line[cm])
+          else ins[hdr] = "Include = " inc
+        }
+      }
+      for (i = 1; i <= n; i++) { print line[i]; if (i in ins) print ins[i] }
+    }' "$1"
+}
+
+enable_pacman_repos() {
+  [[ $PM == pacman ]] && is_desktop || return 0
+  if [[ $SKIP_PACMAN_REPOS == 1 ]]; then log "pacman.conf: etapa pulada (SKIP_PACMAN_REPOS=1)"; return 0; fi
+  local conf=$PACMAN_CONF id arch tmp
+  id=$(os_id); arch=${UNAME_M:-$(uname -m 2>/dev/null || true)}
+  if [[ $id == artix ]]; then
+    log "pacman.conf: o Artix usa repositórios próprios ([system], [world]...); core/extra/multilib não foram alterados"
+    return 0
+  fi
+  if [[ $arch != x86_64 ]]; then
+    log "pacman.conf: $arch não tem multilib (só x86_64); core/extra/multilib não foram alterados"
+    return 0
+  fi
+  [[ -r $conf ]] || { warn "$conf não encontrado; core/extra/multilib não foram ajustados"; return 0; }
+
+  tmp=$(mktemp); CLEANUP_FILES+=("$tmp")
+  if ! pacman_conf_enable_repos "$conf" >"$tmp" || [[ ! -s $tmp ]]; then
+    warn "não consegui processar $conf; core/extra/multilib não foram ajustados"; return 0
+  fi
+  if cmp -s "$conf" "$tmp"; then
+    log "pacman.conf: core, extra e multilib já estão habilitados"; return 0
+  fi
+  # Um Include para um arquivo que não existe quebra o pacman inteiro ("could not open file").
+  if [[ ! -r $PACMAN_MIRRORLIST_INCLUDE ]]; then
+    if ((DRY_RUN)); then warn "$PACMAN_MIRRORLIST_INCLUDE não existe aqui (na execução real o script não mexeria no $conf)"
+    else
+      warn "$PACMAN_MIRRORLIST_INCLUDE não existe; não vou apontar [core]/[extra]/[multilib] para ele. Ajuste PACMAN_MIRRORLIST_INCLUDE e rode de novo"
+      return 0
+    fi
+  fi
+
+  if ((DRY_RUN)); then
+    log "pacman.conf: habilitaria core, extra e multilib (mudanças em $conf):"
+    if command -v diff >/dev/null; then diff -u "$conf" "$tmp" | tail -n +3 | sed 's/^/    /' || true; fi
+    PACMAN_REPOS_CHANGED=1
+    return 0
+  fi
+  if [[ ! -e $conf.setup.bak ]]; then $SUDO cp -a "$conf" "$conf.setup.bak"; fi
+  if ! $SUDO install -m 644 "$tmp" "$conf"; then
+    warn "não consegui gravar $conf; core/extra/multilib não foram habilitados"; return 0
+  fi
+  PACMAN_REPOS_CHANGED=1
+  log "pacman.conf: core, extra e multilib habilitados (backup: $conf.setup.bak)"
+}
+
+# Repositório novo sem banco de dados sincronizado: sincroniza e atualiza o sistema inteiro
+# (nunca só -Sy, que é update parcial). Só roda se o pacman.conf mudou e ainda não houve -Syu/-Syyu.
+sync_pacman_repos() {
+  ((PACMAN_REPOS_CHANGED)) && ((! PACMAN_SYNCED)) || return 0
+  log "Sincronizando os repositórios novos e atualizando o sistema (pacman -Syu)..."
+  if run $SUDO pacman -Syu --noconfirm; then
+    PACMAN_SYNCED=1; PACMAN_REPOS_CHANGED=0
+  else
+    warn "pacman -Syu falhou; rode 'pacman -Syu' manualmente depois"
+  fi
+}
+
+# ─── Repositórios do CachyOS (instalador oficial) ─────────────────────────────
+# https://github.com/CachyOS/linux-cachyos — o mesmo que:
+#   curl -O https://mirror.cachyos.org/cachyos-repo.tar.xz
+#   tar xvf cachyos-repo.tar.xz && cd cachyos-repo && sudo ./cachyos-repo.sh
+# O cachyos-repo.sh detecta o nível da CPU (x86-64-v3/v4/znver4) e mexe no pacman.conf sozinho.
+# Roda com o terminal ligado, então qualquer pergunta dele chega até você.
+#
+# O cachyos-repo.sh troca o pacman pelo fork do CachyOS e o -Syu seguinte pode trocar boa parte do
+# sistema por builds otimizadas (x86-64-v3/v4/znver4): difícil de desfazer. Por isso, logo antes de
+# rodá-lo, o script tira um snapshot do snapper (config "root"). Sem snapper, sem a config "root"
+# (ex.: raiz em ext4) ou se o snapshot falhar, pergunta se quer continuar (padrão: não; sem terminal
+# a resposta é não e a etapa é pulada). CACHYOS_SEM_SNAPSHOT=1 continua sem perguntar.
+CACHYOS_SEM_SNAPSHOT="${CACHYOS_SEM_SNAPSHOT:-0}"
+
+snapper_ready() {  # snapper instalado e com a config "root"?
+  command -v snapper >/dev/null || return 1
+  snapper list-configs 2>/dev/null | grep -qE '^root[[:space:]]'
+}
+
+cachyos_snapshot_gate() {  # 0 = pode rodar o cachyos-repo.sh; 1 = pular a etapa
+  if snapper_ready; then
+    log "snapper: snapshot antes de instalar os repositórios do CachyOS"
+    if run $SUDO snapper -c root create -d "setup.sh: antes dos repositórios do CachyOS"; then return 0; fi
+    warn "snapper: o snapshot falhou"
+  else
+    warn "snapper: não está instalado ou não tem a config 'root' (raiz em btrfs com snapper); não dá para tirar snapshot"
+  fi
+  if [[ $CACHYOS_SEM_SNAPSHOT == 1 ]]; then warn "seguindo sem snapshot (CACHYOS_SEM_SNAPSHOT=1)"; return 0; fi
+  if ((DRY_RUN)); then log "(sem snapshot: o script perguntaria se quer continuar mesmo assim)"; return 0; fi
+  warn "o cachyos-repo.sh troca o pacman pelo fork do CachyOS e atualiza o sistema para pacotes otimizados; sem snapshot não há volta fácil"
+  ask_yn "Continuar sem snapshot?" n
+}
+
+setup_cachyos_repo() {
+  [[ $PM == pacman ]] && is_desktop || return 0
+  if [[ $CACHYOS_REPO == 0 ]]; then log "CachyOS: etapa pulada (--sem-cachyos-repo)"; return 0; fi
+  local id arch
+  id=$(os_id); arch=${UNAME_M:-$(uname -m 2>/dev/null || true)}
+  if [[ $arch != x86_64 ]]; then
+    log "CachyOS: os repositórios só existem para x86_64 (aqui: $arch); pulando"; return 0
+  fi
+  if [[ $id == cachyos ]]; then log "CachyOS: o sistema já é CachyOS; pulando"; return 0; fi
+  if grep -qE '^[[:space:]]*\[cachyos' "$PACMAN_CONF" 2>/dev/null || [[ -e /etc/pacman.d/cachyos-mirrorlist ]]; then
+    log "CachyOS: repositórios já configurados; pulando"; return 0
+  fi
+  if [[ $CACHYOS_REPO == auto ]]; then
+    case $id in
+      arch|endeavouros) ;;
+      *) log "CachyOS: '${id:-desconhecida}' não é Arch nem EndeavourOS; pulando (--cachyos-repo ou CACHYOS_REPO=1 força)"; return 0 ;;
+    esac
+  else
+    case $id in
+      manjaro|artix) warn "CachyOS: '$id' tem repositórios próprios e não é suportado pelo CachyOS; seguindo porque foi forçado" ;;
+    esac
+  fi
+
+  local missing=() c
+  for c in curl tar xz; do command -v "$c" >/dev/null || missing+=("$c"); done
+  if ((${#missing[@]})); then run $SUDO pacman -S --needed --noconfirm "${missing[@]}" || true; fi
+
+  log "CachyOS: baixando e executando o instalador oficial dos repositórios (cachyos-repo.sh)..."
+  if ((DRY_RUN)); then
+    run curl -fL --retry 3 --connect-timeout 20 -o /tmp/cachyos-repo.XXXXXX/cachyos-repo.tar.xz "$CACHYOS_REPO_URL"
+    run tar -xf /tmp/cachyos-repo.XXXXXX/cachyos-repo.tar.xz -C /tmp/cachyos-repo.XXXXXX
+    cachyos_snapshot_gate || { log "CachyOS: pulado (sem snapshot)"; return 0; }
+    log "(entraria na pasta cachyos-repo extraída e executaria:)"
+    run $SUDO ./cachyos-repo.sh
+    PACMAN_REPOS_CHANGED=1; PACMAN_SYNCED=0
+    sync_pacman_repos
+    return 0
+  fi
+
+  local tmp; tmp=$(mktemp -d); CLEANUP_DIRS+=("$tmp")
+  if ! curl -fL --retry 3 --connect-timeout 20 -o "$tmp/cachyos-repo.tar.xz" "$CACHYOS_REPO_URL"; then
+    warn "CachyOS: não consegui baixar $CACHYOS_REPO_URL; pulando"; FAILED+=("cachyos-repo"); return 0
+  fi
+  if ! tar -xf "$tmp/cachyos-repo.tar.xz" -C "$tmp" || [[ ! -f $tmp/cachyos-repo/cachyos-repo.sh ]]; then
+    warn "CachyOS: o pacote baixado não tem cachyos-repo/cachyos-repo.sh; pulando"; FAILED+=("cachyos-repo"); return 0
+  fi
+  chmod +x "$tmp/cachyos-repo/cachyos-repo.sh"
+  # Último ponto de volta: daqui em diante o pacman e o sistema inteiro mudam.
+  cachyos_snapshot_gate || { log "CachyOS: pulado (sem snapshot)"; return 0; }
+  if ! (cd "$tmp/cachyos-repo" && $SUDO ./cachyos-repo.sh); then
+    warn "CachyOS: o cachyos-repo.sh terminou com erro; confira o $PACMAN_CONF"; FAILED+=("cachyos-repo"); return 0
+  fi
+  log "CachyOS: repositórios instalados"
+  # O instalador troca/mexe em pacotes e no pacman.conf: um -Syu completo fecha o ciclo (sem nada a fazer, é rápido).
+  PACMAN_REPOS_CHANGED=1; PACMAN_SYNCED=0
+  sync_pacman_repos
 }
 
 # ─── pacman em proot (Arch Linux ARM e afins) ─────────────────────────────────
@@ -842,7 +1066,10 @@ wsl_font_hint() {
 }
 
 system_phase() {
-  optimize_mirrors # Arch puro: rate-mirrors + atualização completa, antes de qualquer outro pacote
+  enable_pacman_repos  # Arch e derivadas: core/extra/multilib no pacman.conf, antes de qualquer pacote
+  optimize_mirrors     # Arch puro: rate-mirrors + atualização completa
+  sync_pacman_repos    # se o pacman.conf mudou e nenhum -Syu rodou ainda
+  setup_cachyos_repo   # Arch/EndeavourOS x86_64: repositórios do CachyOS (cachyos-repo.sh)
   pm_update
   install_packages
   install_desktop_packages
@@ -1375,8 +1602,7 @@ mc_clone() {  # url destino
 }
 
 mc_snapshot() {
-  command -v snapper >/dev/null || return 0
-  snapper list-configs 2>/dev/null | grep -qE '^root[[:space:]]' || return 0
+  snapper_ready || return 0
   log "snapper: snapshot antes de mexer no bootloader/initramfs"
   run $SUDO snapper -c root create -d "setup.sh: antes dos temas Minecraft" \
     || warn "o snapshot falhou; seguindo sem ele"
@@ -1725,7 +1951,7 @@ main() {
     else
       [[ -f $SCRIPT_PATH ]] || die "Salve o script em disco e rode: bash setup.sh"
       log "Reexecutando com sudo"
-      exec sudo env "REPO_URL=$REPO_URL" "NEW_USER=$NEW_USER" "MC_THEMES=$MC_THEMES" "WSL_DISTRO_NAME=${WSL_DISTRO_NAME:-}" bash "$SCRIPT_PATH" "$@"
+      exec sudo env "REPO_URL=$REPO_URL" "NEW_USER=$NEW_USER" "MC_THEMES=$MC_THEMES" "SKIP_PACMAN_REPOS=$SKIP_PACMAN_REPOS" "CACHYOS_REPO=$CACHYOS_REPO" "CACHYOS_SEM_SNAPSHOT=$CACHYOS_SEM_SNAPSHOT" "PACMAN_MIRRORLIST_INCLUDE=$PACMAN_MIRRORLIST_INCLUDE" "WSL_DISTRO_NAME=${WSL_DISTRO_NAME:-}" bash "$SCRIPT_PATH" "$@"
     fi
   fi
   if ((! DRY_RUN)); then
