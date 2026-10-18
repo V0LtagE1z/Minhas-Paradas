@@ -39,6 +39,7 @@ Como rodar depende do ambiente:
 | -------- | ---------- | -------------- |
 | Distro de desktop | Como root (`su -`) ou como usuário com `sudo` | Cria o usuário `gustavo` e aplica todo o setup nele; o root também passa a usar zsh (veja abaixo) |
 | Termux | Como usuário normal | Aplica o setup direto no seu usuário |
+| Alpine / postmarketOS (`apk`) | `sh setup.sh`, como root ou com `doas`/`sudo` (o bash é instalado sozinho) | Igual às distros de desktop, com as diferenças da seção "Alpine e postmarketOS" |
 | Distro em proot (qualquer uma) | Como root (o script detecta o ambiente) | Cria o usuário `gustavo` sem sudo e aplica o setup nele e no root (veja abaixo) |
 
 O script precisa estar salvo em arquivo (`git clone` e `bash setup.sh`). Rodar via `curl ... | bash` não funciona nas distros, porque a segunda fase reexecuta o próprio arquivo.
@@ -63,13 +64,42 @@ Os dotfiles são aplicados só ao `gustavo`. O root passa a usar zsh, mas sem `~
 
 Se o usuário já existir, o script só ajusta grupos e shell. Para usar outro nome: `NEW_USER=nome bash setup.sh`.
 
+## Alpine e postmarketOS (apk)
+
+`apk`, OpenRC e musl são três coisas independentes, e o script detecta cada uma em vez de tratar tudo como "modo Alpine":
+
+| Eixo | Como detecta | Valores |
+| ---- | ------------ | ------- |
+| Gerenciador de pacotes | `apk` no `PATH` (depois de `apt-get`, `zypper`, `dnf` e `pacman`) | `apk` |
+| Init | `/run/systemd/system`, `/run/openrc` ou `rc-service`, `dinitctl`; no proot é sempre "nenhum" | `systemd`, `openrc`, `dinit`, `none` |
+| libc | `ldd --version` (musl imprime "musl libc"); sem `ldd`, o carregador `ld-musl-*` ou `ld-linux-*` | `musl`, `glibc` |
+
+Com `apk` o script só segue com **musl e sem dinit**. Recusa o Wolfi (glibc, sem init, feito para container) e o Chimera (dinit, userland BSD sem GNU coreutils); `apk` com glibc ou com dinit também. `FORCE_APK=1` ignora a recusa, sem garantia de que funcione. Uma distro com `apk` que não seja Alpine nem postmarketOS passa, com aviso. O log mostra o resultado (`Sistema apk: init=openrc, libc=musl, distro=alpine`).
+
+O que muda no Alpine, em relação às outras distros de desktop:
+
+- **Sem bash.** O Alpine só traz o ash do busybox. O começo do `setup.sh` é POSIX puro: se o bash não existir, instala com `apk add bash` (como root, ou com `doas`/`sudo`) e se reexecuta, por isso rode com `sh setup.sh`. Com `--dry-run` e `--help` nada é instalado: o script só diz para instalar o bash.
+- **`shadow` e `sudo`.** O busybox não tem `useradd`, `usermod` nem `groupadd`: o pacote `shadow` entra na lista de pacotes. O `sudo` não vem instalado e é instalado antes de configurar o `gustavo`. Se você rodar como usuário comum com `doas` e sem `sudo`, o `doas` reexecuta o script como root.
+- **Repositório community.** `fastfetch`, `zoxide`, `micro`, `fzf` e `kitty` ficam no `community`. O script garante um `community` ativo em `/etc/apk/repositories`: descomenta o da **mesma release** do `main` ativo, ou acrescenta o irmão do `main`, e nunca descomenta o do `edge` (misturar `edge` com release estável quebra o sistema). A primeira cópia fica em `repositories.setup.bak`. `SKIP_APK_REPOS=1` pula a etapa.
+- **Cache do apk.** Se não há diretório de cache (container, proot), os pacotes são instalados com `apk add --no-cache`; senão o script roda `apk update` antes.
+- **Locale.** O musl não tem `locale-gen`, e o OpenRC não lê o `/etc/locale.conf` (isso é do systemd). O script instala o `musl-locales` (comando `locale` e traduções de mensagens) e grava `LANG=pt_BR.UTF-8` e `LC_MESSAGES=en_US.UTF-8` em `/etc/profile.d/10-setup-locale.sh`, que o login executa. Sem os arquivos de locale compilados, o musl trata `pt_BR.UTF-8` como `C.UTF-8`: UTF-8 funciona, só não há ordenação nem formatação por idioma. `SKIP_LOCALES=1` pula a etapa.
+- **Temas Minecraft pulados.** O Alpine usa `mkinitfs`, sem os ganchos de `mkinitcpio`, `initramfs-tools` ou `dracut` que o tema do Plymouth usa; `--temas-minecraft` é ignorado com um aviso.
+- **Não se aplicam:** mirrors do Arch, `pacman.conf`, repositórios do CachyOS, `paru` e snapshot (são do `pacman`).
+- **Serviços.** O `setup.sh` não liga nem desliga serviços, então não há `rc-update`/`rc-service` para tratar.
+- **Proot.** O `proot-distro` do Alpine cai no modo proot (sem init, sem `sudo`); o `.zshrc` do root já reconhecia o Alpine e atualiza o sistema com `apk update` e `apk upgrade`.
+- **`nvidia.sh`.** O driver proprietário da NVIDIA é só glibc, então o `nvidia.sh` recusa o Alpine e o postmarketOS (saída 12); no musl só o nouveau funciona.
+
+No `--dry-run`, com o `apk` instalado, o script roda `apk add --simulate` em cada pacote e avisa os que não resolvem no índice local. É só informativo: a simulação não habilita o community e talvez não rode sem root.
+
+**Validação:** o suporte ao apk foi testado só com `--dry-run`, com um `apk` falso e com os applets do busybox no lugar dos GNU (Alpine com e sem cache do apk, postmarketOS, proot, `doas`, as recusas, o bootstrap do bash no ash e a edição do `repositories` em vários formatos). Não foi testado num Alpine ou postmarketOS de verdade; teste lá antes de confiar, principalmente `useradd` com o `shadow`, a senha do `gustavo` e o locale no login.
+
 ## Simulação (--dry-run)
 
 `bash setup.sh --dry-run` (ou `-n`) mostra o que o script faria sem alterar nada, nem precisa de root. Linhas `[dry]` são comandos que seriam executados e linhas `[sim]` são mensagens simuladas. Leituras (checar se um grupo, usuário ou repositório já existe) são feitas de verdade, então a saída reflete o estado atual da máquina. Como o repo não é clonado na simulação, os arquivos de dotfiles aparecem como "copiaria" em vez de comparados com os existentes.
 
 ## Distros em proot (proot-distro)
 
-O script detecta sozinho quando está dentro de um proot, em qualquer distro com `apt`, `dnf` ou `pacman` (Debian, Ubuntu, Fedora, Arch Linux ARM e afins). Os critérios são:
+O script detecta sozinho quando está dentro de um proot, em qualquer distro com `apt`, `dnf`, `zypper`, `pacman` ou `apk` (Debian, Ubuntu, Fedora, openSUSE, Arch Linux ARM, Alpine e afins). Os critérios são:
 
 1. O nome do kernel traz `proot`. O proot-distro devolve algo como `6.17.0-PRoot-Distro` em `uname -r`, o mesmo nome que aparece no `fastfetch`.
 2. Só no Arch Linux ARM: `ID=archarm` em `/etc/os-release` (ou `/etc/arch-release` em CPU ARM) e processo rastreado por ptrace.
@@ -103,11 +133,11 @@ Nas distros de desktop, as etapas 1 a 3 rodam como root; depois o script cria o 
 
 **Repositórios do CachyOS (Arch e EndeavourOS x86_64):** baixa `https://mirror.cachyos.org/cachyos-repo.tar.xz`, extrai e roda o `cachyos-repo.sh` oficial ([CachyOS/linux-cachyos](https://github.com/CachyOS/linux-cachyos)), que detecta o nível da CPU (x86-64-v3/v4/znver4) e ajusta o `pacman.conf` sozinho, e depois roda `pacman -Syu`. **Antes de rodar o instalador, tira um snapshot do snapper** (config `root`), porque o `cachyos-repo.sh` troca o `pacman` pelo fork do CachyOS e o `-Syu` seguinte pode trocar boa parte do sistema por builds otimizadas. Sem snapper, sem a config `root` (raiz em ext4, por exemplo) ou se o snapshot falhar, o script pergunta se você quer continuar sem ele (padrão: não; sem terminal a etapa é pulada). `CACHYOS_SEM_SNAPSHOT=1` continua sem perguntar. O snapshot cobre só a raiz: um `/boot` em partição separada (ESP) fica de fora. O instalador pode fazer perguntas, que aparecem no seu terminal. Pula se já for CachyOS ou se os repositórios já estiverem configurados. Em outras derivadas (Manjaro, Garuda etc.) fica desligado; `--cachyos-repo` (ou `CACHYOS_REPO=1`) força, `--sem-cachyos-repo` (ou `CACHYOS_REPO=0`) desliga.
 
-1. Detecta o gerenciador de pacotes: `pkg` (Termux), `apt`, `dnf` ou `pacman`.
+1. Detecta o gerenciador de pacotes: `pkg` (Termux), `apt`, `zypper`, `dnf`, `pacman` ou `apk` (Alpine e postmarketOS; veja a seção própria).
 2. Instala `zsh git curl fastfetch micro fzf zoxide`. Um pacote indisponível não interrompe o script, só aparece na lista de falhas no final.
 3. **Só em distros** (no WSL, sem `kitty` e `fontconfig`; veja a seção do WSL):
    - Instala `kitty` e `fontconfig`.
-   - Gera os locales `pt_BR.UTF-8` e `en_US.UTF-8` do sistema e grava `LANG=pt_BR.UTF-8` e `LC_MESSAGES=en_US.UTF-8` em `/etc/locale.conf`. Arch e Debian/Ubuntu usam o `/etc/locale.gen` com `locale-gen` (Debian/Ubuntu instalam antes o pacote `locales`); Fedora instala `glibc-langpack-en` e `glibc-langpack-pt`; openSUSE instala `glibc-locale`. No Debian/Ubuntu o `/etc/default/locale` também recebe as duas chaves (é o que o login lê). Só `LANG` e `LC_MESSAGES` são tocados: as outras linhas do arquivo ficam, e a cópia original vai para `<arquivo>.setup.bak`. `SKIP_LOCALES=1` pula a etapa; `SYS_LANG` e `SYS_LC_MESSAGES` trocam os valores.
+   - Gera os locales `pt_BR.UTF-8` e `en_US.UTF-8` do sistema e grava `LANG=pt_BR.UTF-8` e `LC_MESSAGES=en_US.UTF-8` em `/etc/locale.conf`. Arch e Debian/Ubuntu usam o `/etc/locale.gen` com `locale-gen` (Debian/Ubuntu instalam antes o pacote `locales`); Fedora instala `glibc-langpack-en` e `glibc-langpack-pt`; openSUSE instala `glibc-locale`; Alpine/postmarketOS (musl) instala `musl-locales` e grava em `/etc/profile.d/10-setup-locale.sh` (veja a seção do Alpine). No Debian/Ubuntu o `/etc/default/locale` também recebe as duas chaves (é o que o login lê). Só `LANG` e `LC_MESSAGES` são tocados: as outras linhas do arquivo ficam, e a cópia original vai para `<arquivo>.setup.bak`. `SKIP_LOCALES=1` pula a etapa; `SYS_LANG` e `SYS_LC_MESSAGES` trocam os valores.
 4. No Arch/CachyOS, instala o `paru` (pelo repositório ou compilando o `paru` do AUR). O `paru-bin` não é usado: ele é pré-compilado e quebra (`libalpm.so.15: cannot open shared object file`) quando o pacman sobe de versão. Se já houver um `paru` que não executa, o script remove o `paru-bin` e recompila.
 5. Clona o oh-my-zsh, o powerlevel10k (em `~/powerlevel10k`) e os plugins `zsh-autosuggestions`, `fast-syntax-highlighting` e `zsh-history-substring-search`.
 6. Copia os dotfiles para o `$HOME`, cada ambiente da sua pasta:
@@ -160,9 +190,10 @@ Como o repo é a fonte da verdade, alterações feitas direto no `~/.zshrc` ou n
 ## Limitações
 
 - O `emerge` (Gentoo) ainda não é suportado.
+- O suporte ao `apk` não foi testado num Alpine ou postmarketOS de verdade (veja "Validação" na seção do Alpine). Wolfi e Chimera são recusados de propósito.
 - Os temas Minecraft e o `--reverter-temas` foram validados com `--dry-run` e com testes em arquivos de exemplo (instalar, reverter e comparar com os originais: `/etc/default/grub`, `mkinitcpio.conf` e `/etc/grub.d`), mas não num boot de verdade. Teste primeiro no Arch com GRUB; Fedora, Debian e Ubuntu só foram escritos a partir da documentação dos dois temas.
 - Encerrar a sessão fecha o shell (ou o terminal) que chamou o script; não faz logout da sessão gráfica.
-- O modo proot foi escrito para qualquer distro com `apt`, `dnf` ou `pacman`, mas só foi validado com `--dry-run`. Teste de verdade em cada distro antes de confiar (o `su -l gustavo` e o `useradd` dependem de como o proot emula usuários).
+- O modo proot foi escrito para qualquer distro com `apt`, `dnf`, `zypper`, `pacman` ou `apk`, mas só foi validado com `--dry-run`. Teste de verdade em cada distro antes de confiar (o `su -l gustavo` e o `useradd` dependem de como o proot emula usuários).
 - Nas distros de desktop o setup é sempre aplicado ao usuário `gustavo`, e não ao usuário que rodou o script. Para rodar de novo depois, basta executar o script outra vez (por root ou por qualquer usuário com `sudo`, inclusive o próprio `gustavo`). No proot, rode de novo como root.
 - Termux não cria usuário.
 - O sudo do `gustavo` exige senha. A exceção é a instalação do `paru` no Arch/CachyOS, descrita acima. No proot o `gustavo` não tem sudo.

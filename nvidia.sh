@@ -646,7 +646,14 @@ inst_parse() {
 # ---------- portões de segurança -----------------------------------------------
 inst_gate() {
   (( NV_ENV_OK )) || { _err "ambiente sem suporte: $NV_ENV_REASON"; return 11; }
-  [[ -n $NV_FAMILY ]] || { _err "distro não suportada (id=${NV_DISTRO_ID:-?})"; return 12; }
+  if [[ -z $NV_FAMILY ]]; then
+    _err "distro não suportada (id=${NV_DISTRO_ID:-?})"
+    # Alpine/postmarketOS: o driver proprietário da NVIDIA só existe para glibc; no musl só o nouveau (mesa) funciona.
+    case ${NV_DISTRO_ID:-} in
+      alpine|postmarketos) _msg "O driver proprietário da NVIDIA é só glibc; no musl (Alpine/postmarketOS) só o nouveau funciona." ;;
+    esac
+    return 12
+  fi
   (( NV_NVIDIA_PRESENT )) || { _err "nenhuma GPU NVIDIA detectada"; return 10; }
 
   if [[ -n $NV_MANAGED_BY ]] && (( ! OPT_IGNORE_MANAGED )); then
