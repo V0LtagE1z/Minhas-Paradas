@@ -1,8 +1,19 @@
 #!/usr/bin/env bash
 # setup.sh — pós-instalação: usuário + zsh + oh-my-zsh + powerlevel10k + dotfiles do repo Minhas-Paradas.
-# Suporta: Termux (pkg), Debian/Ubuntu (apt), Fedora (dnf), openSUSE (zypper), Arch/CachyOS (pacman + paru)
+# Suporta: Termux (pkg), Debian/Ubuntu (apt), Fedora (dnf), openSUSE (zypper), Arch/CachyOS (pacman + paru),
+# Alpine e postmarketOS (apk; musl, geralmente com OpenRC)
 # e essas mesmas distros rodando dentro de proot (proot-distro): lá o script roda como root,
 # sem sudo, paru, Kitty nem fontes (a fonte é a do próprio Termux).
+#
+# Alpine/postmarketOS (apk): o gerenciador de pacotes, o init e a libc são coisas independentes. O script
+# detecta cada uma (PM=apk, INIT_SYSTEM=openrc|systemd|dinit|none, LIBC=musl|glibc) e só aceita apk com musl
+# e sem dinit. Wolfi (glibc, sem init) e Chimera (dinit, userland BSD) são recusados; FORCE_APK=1 ignora a recusa.
+# Diferenças tratadas no Alpine:
+#   - sem bash por padrão: o começo do script (POSIX) instala o bash via apk e se reexecuta; rode com "sh setup.sh";
+#   - sem useradd/usermod/groupadd (pacote shadow) e sem sudo (instalados pelo script; "doas" serve para reexecutar);
+#   - repositório community habilitado em /etc/apk/repositories (é onde estão fastfetch, zoxide, micro, fzf, kitty);
+#   - musl não tem locale-gen: LANG/LC_MESSAGES vão para /etc/profile.d (o locale.conf é coisa do systemd);
+#   - temas Minecraft (GRUB + Plymouth) pulados: o Alpine usa mkinitfs e syslinux/GRUB próprios, sem initramfs-tools/dracut.
 #
 # Distros de desktop: rode como root (ou com sudo). O script
 #   0. no Arch e derivadas (pacman): garante core, extra e multilib habilitados no pacman.conf;
@@ -29,6 +40,38 @@
 #
 # Use --dry-run para ver o que seria feito sem alterar nada.
 # Pode ser executado várias vezes sem quebrar nada.
+
+# ─── Bootstrap do bash (Alpine e outras distros sem bash) ─────────────────────
+# Este bloco é POSIX puro de propósito: no Alpine o "sh" é o ash do busybox e o resto do script usa
+# recursos do bash ([[ ]], arrays, ${var,,}). O ash lê e executa um comando por vez, então ele chega
+# aqui, instala o bash e passa a execução adiante sem nunca ler a sintaxe do bash lá embaixo.
+# Com --dry-run e --help nada é instalado: o script só explica o que fazer.
+if [ -z "${BASH_VERSION:-}" ]; then
+  _self=$0
+  if command -v bash >/dev/null 2>&1; then exec bash "$_self" "$@"; fi
+  _install=1
+  for _a in "$@"; do
+    case $_a in --dry-run|-n|--help|-h) _install=0 ;; esac
+  done
+  if [ "$_install" = 0 ]; then
+    echo "[!!] bash não encontrado, e --dry-run/--help precisam dele. Instale-o (no Alpine: apk add bash) e rode: bash $_self $*" >&2
+    exit 1
+  fi
+  if ! command -v apk >/dev/null 2>&1; then
+    echo "[erro] este script precisa do bash e não sei instalá-lo aqui. Instale o bash e rode: bash $_self" >&2
+    exit 1
+  fi
+  echo "[!!] bash não encontrado; instalando com o apk..." >&2
+  if [ "$(id -u)" -eq 0 ]; then apk add --no-cache bash
+  elif command -v doas >/dev/null 2>&1; then doas apk add --no-cache bash
+  elif command -v sudo >/dev/null 2>&1; then sudo apk add --no-cache bash
+  else
+    echo "[erro] sem root, doas nem sudo para instalar o bash. Rode como root (su -) ou: apk add bash" >&2
+    exit 1
+  fi || { echo "[erro] não consegui instalar o bash." >&2; exit 1; }
+  exec bash "$_self" "$@"
+fi
+
 set -euo pipefail
 
 # No Debian, "su" sem "-" não traz /usr/sbin no PATH (useradd, usermod, visudo).
@@ -65,6 +108,21 @@ PACMAN_SYNCED=0          # 1 = um pacman -Syu/-Syyu completo já rodou depois da
 #   (menos no próprio CachyOS); 0 = pula. Também: --cachyos-repo e --sem-cachyos-repo.
 CACHYOS_REPO="${CACHYOS_REPO:-auto}"
 CACHYOS_REPO_URL="${CACHYOS_REPO_URL:-https://mirror.cachyos.org/cachyos-repo.tar.xz}"
+
+# apk (Alpine e postmarketOS):
+#   FORCE_APK=1       aceita apk mesmo em Wolfi/Chimera ou com glibc/dinit (sem garantia nenhuma);
+#   SKIP_APK_REPOS=1  não mexe em /etc/apk/repositories (é lá que o community é habilitado);
+#   FORCE_LIBC=musl|glibc e FORCE_INIT=systemd|openrc|dinit|none trocam a detecção (úteis para testar).
+FORCE_APK="${FORCE_APK:-0}"
+SKIP_APK_REPOS="${SKIP_APK_REPOS:-0}"
+APK_REPOS_FILE="${APK_REPOS_FILE:-/etc/apk/repositories}"
+APK_CACHE_DIR="${APK_CACHE_DIR:-/var/cache/apk}"
+PROFILE_LOCALE_FILE="${PROFILE_LOCALE_FILE:-/etc/profile.d/10-setup-locale.sh}"
+# O busybox não traz useradd/usermod/groupadd nem "passwd -S": isso vem do pacote shadow.
+APK_EXTRA_PACKAGES=(shadow)
+LIBC=""           # musl | glibc | unknown (preenchido por detect_libc)
+INIT_SYSTEM=""    # systemd | openrc | dinit | none (preenchido por detect_init)
+APK_ADD_FLAGS=()  # --no-cache quando o apk não tem diretório de cache (container, proot)
 
 # Pacotes (o nome é igual em todos os gerenciadores; a exceção é o micro no zypper, tratada em pm_install). Adicione os outros aqui.
 PACKAGES=(zsh git curl fastfetch micro fzf zoxide)
@@ -183,6 +241,7 @@ zsh_shell_path() {
 
 PM=""
 SUDO="sudo"
+ELEVATE="sudo"   # comando usado para reexecutar o script como root (no Alpine pode ser "doas")
 FAILED=()
 PROOT=0         # 1 = rodando dentro de um proot (ex.: proot-distro no Termux), qualquer distro
 IS_ALARM=0      # 1 = Arch Linux ARM (só relevante junto com PROOT=1, para o keyring)
@@ -227,7 +286,11 @@ Variáveis úteis: NEW_USER (padrão: gustavo), REPO_URL, REPO_DIR,
                  SKIP_PACMAN_REPOS=1 (não mexer em core/extra/multilib no pacman.conf),
                  CACHYOS_REPO=auto|1|0 (repositórios do CachyOS: só Arch/EndeavourOS | forçar | pular),
                  CACHYOS_SEM_SNAPSHOT=1 (instala os repos do CachyOS mesmo sem poder tirar snapshot do snapper),
-                 MC_THEMES=1|0 (o mesmo que --temas-minecraft / --sem-temas-minecraft).
+                 SKIP_APK_REPOS=1 (Alpine: não habilitar o repositório community em /etc/apk/repositories),
+                 FORCE_APK=1 (aceita apk mesmo em Wolfi/Chimera ou com glibc/dinit; sem garantia de que funcione),
+                 MC_THEMES=1|0 (o mesmo que --temas-minecraft / --sem-temas-minecraft; no Alpine é ignorado).
+
+No Alpine, rode com "sh setup.sh": o bash é instalado sozinho pelo apk e o script se reexecuta.
 EOF
 }
 
@@ -360,17 +423,105 @@ detect_pm() {
   elif command -v zypper >/dev/null;  then PM=zypper
   elif command -v dnf >/dev/null;     then PM=dnf
   elif command -v pacman >/dev/null;  then PM=pacman
+  # apk por último: Alpine e postmarketOS não têm nenhum dos outros. A decisão de aceitar ou recusar a
+  # distro (Wolfi, Chimera...) vem depois, em apk_support_check, quando libc e init já foram detectados.
+  elif command -v apk >/dev/null;     then PM=apk
   else die "Gerenciador de pacotes não suportado."
   fi
 
   # Root não precisa de sudo; no proot o sudo não é usado (setuid não funciona lá).
   if [[ $EUID -eq 0 ]] || ((PROOT)); then SUDO=""; fi
   if [[ -n $SUDO ]] && ! command -v sudo >/dev/null; then
-    if ((DRY_RUN)); then warn "sudo não encontrado (na simulação ele seria instalado)"
+    if [[ $PM == apk ]] && command -v doas >/dev/null; then
+      # Alpine sem sudo mas com doas: o doas só reexecuta o script como root; o sudo é instalado depois.
+      ELEVATE=doas; SUDO=doas
+      log "sudo não encontrado; usando o doas para reexecutar o script como root"
+    elif ((DRY_RUN)); then warn "sudo não encontrado (na simulação ele seria instalado)"
     else die "sudo não encontrado. Rode este script como root (su -)."
     fi
   fi
   log "Gerenciador detectado: $PM"
+}
+
+# ─── apk: três eixos independentes (gerenciador, init, libc) ─────────────────
+# "apk" não quer dizer OpenRC nem musl: Alpine e postmarketOS (apk + OpenRC + musl), Chimera (apk + dinit +
+# musl, userland BSD) e Wolfi (apk + glibc, sem init: feito para container) usam o mesmo gerenciador.
+# Por isso cada eixo é detectado à parte e o script decide pelo conjunto.
+detect_libc() {
+  local f out
+  LIBC=""
+  case ${FORCE_LIBC:-} in musl|glibc) LIBC=$FORCE_LIBC; return 0 ;; esac
+  # "ldd --version" é do libc padrão do sistema: o musl imprime "musl libc" (e sai com 1), o glibc "GNU libc"/"GLIBC".
+  # O pacote "musl" do Debian instala /lib/ld-musl-*.so.1 numa distro glibc, então o ldd vem antes dos arquivos.
+  if [[ -z $ROOT_PREFIX ]] && command -v ldd >/dev/null 2>&1; then
+    out=$(ldd --version 2>&1 || true)
+    case ${out,,} in
+      *musl*)              LIBC=musl;  return 0 ;;
+      *glibc*|*"gnu libc"*) LIBC=glibc; return 0 ;;
+    esac
+  fi
+  # Sem ldd: pelo carregador dinâmico. O Alpine com gcompat também tem ld-linux (um atalho), então o musl vem primeiro.
+  for f in "$ROOT_PREFIX"/lib/ld-musl-*.so.1 "$ROOT_PREFIX"/usr/lib/ld-musl-*.so.1; do
+    if [[ -e $f ]]; then LIBC=musl; return 0; fi
+  done
+  for f in "$ROOT_PREFIX"/lib64/ld-linux-*.so.* "$ROOT_PREFIX"/lib/ld-linux-*.so.* \
+           "$ROOT_PREFIX"/lib/*/ld-linux-*.so.* "$ROOT_PREFIX"/usr/lib/ld-linux-*.so.* \
+           "$ROOT_PREFIX"/usr/lib64/ld-linux-*.so.*; do
+    if [[ -e $f ]]; then LIBC=glibc; return 0; fi
+  done
+  LIBC=unknown
+}
+
+detect_init() {
+  INIT_SYSTEM=""
+  case ${FORCE_INIT:-} in systemd|openrc|dinit|none) INIT_SYSTEM=$FORCE_INIT; return 0 ;; esac
+  # No proot e no WSL sem systemd não há init de verdade para gerenciar serviços.
+  if ((PROOT)); then INIT_SYSTEM=none; return 0; fi
+  if   [[ -d $ROOT_PREFIX/run/systemd/system ]]; then INIT_SYSTEM=systemd
+  elif [[ -d $ROOT_PREFIX/run/openrc ]] || command -v rc-service >/dev/null 2>&1; then INIT_SYSTEM=openrc
+  elif command -v dinitctl >/dev/null 2>&1; then INIT_SYSTEM=dinit
+  else INIT_SYSTEM=none
+  fi
+}
+
+os_id_like() {  # imprime o ID_LIKE= do os-release em minúsculas, sem aspas (vazio se não achar)
+  local f=${OS_RELEASE_FILE:-/etc/os-release}
+  [[ -r $f ]] || f=/usr/lib/os-release
+  [[ -r $f ]] || return 0
+  sed -nE 's/^ID_LIKE="?([^"]*)"?[[:space:]]*$/\1/p' "$f" | head -1 | tr '[:upper:]' '[:lower:]'
+}
+
+# Só aceita apk com musl e sem dinit; FORCE_APK=1 ignora. Roda depois de detect_pm, detect_env e detect_libc/init.
+apk_support_check() {
+  [[ $PM == apk ]] || return 0
+  local id like why=""
+  id=$(os_id); like=$(os_id_like)
+  case $id in
+    wolfi)   why="o Wolfi usa glibc e não tem init (é feito para container, sem OpenRC)" ;;
+    chimera) why="o Chimera usa dinit e um userland BSD (sem GNU coreutils), que quebra boa parte deste script" ;;
+  esac
+  if [[ -z $why && $LIBC == glibc ]]; then
+    why="apk com glibc (estilo Wolfi): o script foi escrito para musl"
+  fi
+  if [[ -z $why && $INIT_SYSTEM == dinit ]]; then
+    why="init dinit detectado: só OpenRC (ou sem init, no proot/WSL) é suportado com apk"
+  fi
+  if [[ -n $why ]]; then
+    if [[ $FORCE_APK == 1 ]]; then
+      warn "apk: $why; seguindo mesmo assim porque FORCE_APK=1"
+    else
+      die "apk não suportado nesta distro: $why. FORCE_APK=1 ignora esta recusa, sem garantia de que funcione."
+    fi
+  fi
+  case " $id $like " in
+    *" alpine "*|*" postmarketos "*) ;;
+    *) warn "apk: '${id:-desconhecida}' não é Alpine nem postmarketOS; os caminhos do apk foram pensados para eles" ;;
+  esac
+  log "Sistema apk: init=$INIT_SYSTEM, libc=$LIBC, distro=${id:-?}"
+  # Sem diretório de cache (container, proot) o "apk add" precisa de --no-cache para buscar o índice na hora.
+  if [[ ! -d $ROOT_PREFIX$APK_CACHE_DIR && ! -e $ROOT_PREFIX/etc/apk/cache ]]; then
+    APK_ADD_FLAGS=(--no-cache)
+  fi
 }
 
 pm_update() {
@@ -378,6 +529,11 @@ pm_update() {
     pkg)    run pkg update -y ;;
     apt)    run $SUDO apt-get update ;;
     zypper) zypper_run refresh || warn "zypper refresh falhou (algum repositório fora do ar?); sigo com os metadados que já existem" ;;
+    apk)
+      # Com --no-cache (sem diretório de cache) o próprio "apk add" busca o índice; senão atualiza o índice local.
+      if ((${#APK_ADD_FLAGS[@]} == 0)); then
+        run $SUDO apk update || warn "apk update falhou (repositório fora do ar?); sigo com o índice que já existe"
+      fi ;;
     *)      : ;;  # dnf atualiza metadados sozinho; no pacman evitamos -Sy isolado
   esac
 }
@@ -404,12 +560,33 @@ pm_install() {  # instala UM pacote
     dnf)    run $SUDO dnf install -y "$pkg" ;;
     zypper) zypper_run install "$pkg" ;;
     pacman) run $SUDO pacman -S --needed --noconfirm "$pkg" ;;
+    apk)    run $SUDO apk add ${APK_ADD_FLAGS[@]+"${APK_ADD_FLAGS[@]}"} "$pkg" ;;
   esac
+}
+
+# Só em --dry-run no apk: confere no índice local se os pacotes existem (apk add --simulate não instala nada).
+# É informativo: sem root o apk pode recusar a simulação, e no --dry-run o community não foi habilitado de verdade.
+apk_dry_check() {
+  [[ $PM == apk ]] && ((DRY_RUN)) || return 0
+  command -v apk >/dev/null 2>&1 || return 0
+  local p miss=()
+  for p in "$@"; do
+    apk add --simulate "$p" >/dev/null 2>&1 || miss+=("$p")
+  done
+  if ((${#miss[@]})); then
+    warn "apk add --simulate não resolveu: ${miss[*]} (índice local velho ou sem o community? rode 'apk update', ou ignore: a simulação não habilita o community nem roda como root)"
+  else
+    log "apk add --simulate: todos os pacotes resolvem no índice local"
+  fi
 }
 
 install_packages() {
   local p
-  for p in "${PACKAGES[@]}"; do
+  local -a list=("${PACKAGES[@]}")
+  # No Alpine: shadow (useradd/usermod/groupadd) vem antes de create_user.
+  if [[ $PM == apk ]]; then list+=("${APK_EXTRA_PACKAGES[@]}"); fi
+  apk_dry_check "${list[@]}"
+  for p in "${list[@]}"; do
     if pm_install "$p"; then
       log "pacote: $p"
     else
@@ -426,6 +603,7 @@ install_desktop_packages() {
     return 0
   fi
   local p
+  apk_dry_check "${DESKTOP_PACKAGES[@]}"
   for p in "${DESKTOP_PACKAGES[@]}"; do
     if pm_install "$p"; then
       log "pacote (desktop): $p"
@@ -603,6 +781,68 @@ sync_pacman_repos() {
   else
     warn "pacman -Syu falhou; rode 'pacman -Syu' manualmente depois"
   fi
+}
+
+# ─── apk: repositório community (Alpine e postmarketOS) ───────────────────────
+# fastfetch, zoxide, micro, fzf e kitty ficam no "community", que pode estar comentado em
+# /etc/apk/repositories (ou ausente). A regra é a mesma do pacman.conf acima:
+#   - já existe um community ativo        -> não mexe;
+#   - o community da MESMA release está comentado (#.../v3.22/community) -> descomenta só esse;
+#   - não existe                          -> acrescenta o irmão do "main" ativo (.../v3.22/main -> .../v3.22/community).
+# Nunca descomenta o community do "edge" por engano (misturar edge com uma release estável quebra o sistema).
+# Sem um "main" ativo em URL (ex.: só /media/cdrom/apks) não há de onde derivar, e o script só avisa.
+apk_repos_enable_community() {  # arquivo-entrada → imprime o arquivo novo no stdout
+  awk '
+    function trim(s) { gsub(/^[ \t\r]+|[ \t\r]+$/, "", s); return s }
+    { line[++n] = $0 }
+    END {
+      for (i = 1; i <= n; i++) {
+        t = trim(line[i])
+        if (t == "" || substr(t, 1, 1) == "#") continue
+        k = split(t, parts, /[ \t]+/)
+        url = parts[k]
+        if (url ~ /\/community$/) active = 1
+        if (url ~ /\/main$/ && substr(t, 1, 1) != "@" && main == "") main = url
+      }
+      if (active || main == "") { for (i = 1; i <= n; i++) print line[i]; exit }
+      comm = main; sub(/\/main$/, "/community", comm)
+      for (i = 1; i <= n; i++) {
+        t = trim(line[i])
+        if (!done && substr(t, 1, 1) == "#" && trim(substr(t, 2)) == comm) { print comm; done = 1; continue }
+        print line[i]
+      }
+      if (!done) print comm
+    }' "$1"
+}
+
+enable_apk_repos() {
+  [[ $PM == apk ]] || return 0
+  if [[ $SKIP_APK_REPOS == 1 ]]; then log "apk: repositórios não alterados (SKIP_APK_REPOS=1)"; return 0; fi
+  local conf=$APK_REPOS_FILE tmp
+  [[ -r $conf ]] || { warn "$conf não encontrado; confira à mão se o repositório community está habilitado"; return 0; }
+
+  tmp=$(mktemp); CLEANUP_FILES+=("$tmp")
+  if ! apk_repos_enable_community "$conf" >"$tmp" || [[ ! -s $tmp ]]; then
+    warn "não consegui processar $conf; o repositório community não foi ajustado"; return 0
+  fi
+  if cmp -s "$conf" "$tmp"; then
+    if grep -qE '^[[:space:]]*[^#@[:space:]][^[:space:]]*/community[[:space:]]*$|^[[:space:]]*@[^[:space:]]+[[:space:]]+[^[:space:]]*/community[[:space:]]*$' "$conf"; then
+      log "apk: o repositório community já está habilitado"
+    else
+      warn "apk: não achei um repositório main ativo em $conf para derivar o community; habilite-o à mão (fastfetch, zoxide, micro, fzf e kitty dependem dele)"
+    fi
+    return 0
+  fi
+  if ((DRY_RUN)); then
+    log "apk: habilitaria o repositório community (mudanças em $conf):"
+    if command -v diff >/dev/null; then diff -u "$conf" "$tmp" | tail -n +3 | sed 's/^/    /' || true; fi
+    return 0
+  fi
+  if [[ ! -e $conf.setup.bak ]]; then $SUDO cp -a "$conf" "$conf.setup.bak"; fi
+  if ! $SUDO install -m 644 "$tmp" "$conf"; then
+    warn "não consegui gravar $conf; o repositório community não foi habilitado"; return 0
+  fi
+  log "apk: repositório community habilitado (backup: $conf.setup.bak)"
 }
 
 # ─── Repositórios do CachyOS (instalador oficial) ─────────────────────────────
@@ -818,9 +1058,35 @@ write_locale_conf() {
   done
 }
 
+# musl não tem locale-gen nem arquivos de locale compilados: o setlocale() aceita "pt_BR.UTF-8" sem eles e o trata
+# como C.UTF-8 (UTF-8 funciona; só não há ordenação/formatação por idioma). O pacote musl-locales traz o comando
+# "locale" e as traduções de mensagens (LC_MESSAGES). O OpenRC não lê /etc/locale.conf (isso é do systemd): o valor
+# vai para um script do /etc/profile.d, que o /etc/profile do Alpine (e o zprofile do pacote zsh) executa no login.
+# O .zshrc do repo já exporta LANG/LC_MESSAGES; isto cobre o console e o ash antes de entrar no zsh.
+apk_system_locales() {
+  local f=$PROFILE_LOCALE_FILE content
+  if pm_install musl-locales; then log "pacote (locales): musl-locales"
+  else warn "falhou: musl-locales (só afeta as traduções de mensagens)"; fi
+  content=$(printf '# gerado por setup.sh: locale do sistema (musl nao tem locale-gen; o OpenRC nao le o locale.conf)\nexport LANG=%s\nexport LC_MESSAGES=%s' "$SYS_LANG" "$SYS_LC_MESSAGES")
+  if [[ -f $f && $(<"$f") == "$content" ]]; then log "locale do sistema já está em $f"; return 0; fi
+  if ((DRY_RUN)); then
+    log "gravaria $f com:"
+    sed 's/^/    /' <<<"$content"
+    return 0
+  fi
+  if [[ -f $f && ! -e $f.setup.bak ]]; then $SUDO cp -a "$f" "$f.setup.bak"; fi
+  $SUDO mkdir -p "$(dirname "$f")"
+  if printf '%s\n' "$content" | $SUDO tee "$f" >/dev/null && $SUDO chmod 644 "$f"; then
+    log "locale do sistema em $f: LANG=$SYS_LANG, LC_MESSAGES=$SYS_LC_MESSAGES"
+  else
+    warn "não consegui gravar $f; defina LANG e LC_MESSAGES à mão (o .zshrc já os exporta nas sessões do zsh)"
+  fi
+}
+
 system_locales() {
   is_desktop || return 0
   if [[ ${SKIP_LOCALES:-0} == 1 ]]; then log "locales: etapa pulada (SKIP_LOCALES=1)"; return 0; fi
+  if [[ $PM == apk ]]; then apk_system_locales; return 0; fi
   local p pkgs=()
   case $PM in
     apt)    pkgs=(locales) ;;
@@ -1066,6 +1332,7 @@ wsl_font_hint() {
 }
 
 system_phase() {
+  enable_apk_repos     # Alpine/postmarketOS: repositório community, antes de qualquer pacote
   enable_pacman_repos  # Arch e derivadas: core/extra/multilib no pacman.conf, antes de qualquer pacote
   optimize_mirrors     # Arch puro: rate-mirrors + atualização completa
   sync_pacman_repos    # se o pacman.conf mudou e nenhum -Syu rodou ainda
@@ -1235,6 +1502,7 @@ report_zshrc_termux() {
 proot_phase() {
   if ((DRY_RUN)); then report_zshrc_termux; report_zshrc_family; fi
   prepare_proot_pacman
+  enable_apk_repos     # proot-distro do Alpine: community habilitado antes de instalar
   pm_update
   install_packages
   gen_locales
@@ -1510,7 +1778,7 @@ find_parent_shell() {
     comm=$(cat "/proc/$ppid/comm" 2>/dev/null) || return 1
     case $comm in
       sudo|su|doas|env|timeout) ;;   # intermediários: continua subindo
-      bash|zsh|sh|dash|ksh|fish)
+      bash|zsh|sh|ash|dash|ksh|fish)   # ash: shell padrão do root no Alpine (busybox)
         args=$(tr '\0' ' ' < "/proc/$ppid/cmdline" 2>/dev/null) || args=""
         # um shell que só está rodando este script (ex.: sh -c "bash setup.sh") não é a sessão
         if [[ -z $SCRIPT_PATH || $args != *"${SCRIPT_PATH##*/}"* ]]; then
@@ -1561,6 +1829,17 @@ decide_minecraft_themes() {
     return 0
   fi
   is_desktop || { MC_THEMES=0; return 0; }
+  # Alpine/postmarketOS: initramfs é do mkinitfs (sem hook de plymouth do mkinitcpio, initramfs-tools ou dracut) e o
+  # bootloader costuma ser syslinux/GRUB próprio, então o install.sh do tema de Plymouth não tem onde se encaixar.
+  if [[ $PM == apk ]]; then
+    if [[ $MC_THEMES == 1 ]]; then
+      warn "apk: --temas-minecraft ignorado (o Alpine usa mkinitfs, e os temas foram escritos para mkinitcpio, initramfs-tools e dracut)"
+    else
+      log "apk: temas Minecraft pulados (o Alpine usa mkinitfs, sem os ganchos de mkinitcpio, initramfs-tools ou dracut)"
+    fi
+    MC_THEMES=0
+    return 0
+  fi
   case $MC_THEMES in 1|0) return 0 ;; esac
   if ((DRY_RUN)); then
     log "perguntaria: \"Instalar os temas Minecraft (GRUB + Plymouth)?\" (simulando sim)"
@@ -1898,6 +2177,11 @@ main() {
 
   detect_env
   detect_pm
+  if [[ $PM == apk ]]; then   # gerenciador, init e libc são coisas diferentes: veja apk_support_check
+    detect_libc
+    detect_init
+    apk_support_check
+  fi
   detect_wsl
   if ((WSL)); then
     log "WSL detectado ($WSL_WHY): sem bootloader próprio, então GRUB, Plymouth e initramfs (temas Minecraft) serão pulados"
@@ -1946,12 +2230,12 @@ main() {
   # Distros de desktop, fase 1: precisa de root.
   if [[ $EUID -ne 0 ]]; then
     if ((DRY_RUN)); then
-      log "reexecutaria com sudo; simulando como root"
+      log "reexecutaria com $ELEVATE; simulando como root"
       SUDO=""
     else
       [[ -f $SCRIPT_PATH ]] || die "Salve o script em disco e rode: bash setup.sh"
-      log "Reexecutando com sudo"
-      exec sudo env "REPO_URL=$REPO_URL" "NEW_USER=$NEW_USER" "MC_THEMES=$MC_THEMES" "SKIP_PACMAN_REPOS=$SKIP_PACMAN_REPOS" "CACHYOS_REPO=$CACHYOS_REPO" "CACHYOS_SEM_SNAPSHOT=$CACHYOS_SEM_SNAPSHOT" "PACMAN_MIRRORLIST_INCLUDE=$PACMAN_MIRRORLIST_INCLUDE" "WSL_DISTRO_NAME=${WSL_DISTRO_NAME:-}" bash "$SCRIPT_PATH" "$@"
+      log "Reexecutando com $ELEVATE"
+      exec "$ELEVATE" env "REPO_URL=$REPO_URL" "NEW_USER=$NEW_USER" "MC_THEMES=$MC_THEMES" "SKIP_PACMAN_REPOS=$SKIP_PACMAN_REPOS" "CACHYOS_REPO=$CACHYOS_REPO" "CACHYOS_SEM_SNAPSHOT=$CACHYOS_SEM_SNAPSHOT" "PACMAN_MIRRORLIST_INCLUDE=$PACMAN_MIRRORLIST_INCLUDE" "FORCE_APK=$FORCE_APK" "SKIP_APK_REPOS=$SKIP_APK_REPOS" "FORCE_LIBC=${FORCE_LIBC:-}" "FORCE_INIT=${FORCE_INIT:-}" "WSL_DISTRO_NAME=${WSL_DISTRO_NAME:-}" bash "$SCRIPT_PATH" "$@"
     fi
   fi
   if ((! DRY_RUN)); then
