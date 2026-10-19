@@ -16,10 +16,12 @@ BACKUP_FILE="$BACKUP_DIR/termux_backup_${TIMESTAMP}.tar.zst"
 
 mkdir -p "$BACKUP_DIR"
 
+# ~/.ssh fica de fora: o backup é gravado sem cifrar numa pasta que outros apps leem. Guarde as chaves à parte.
 echo "📊 Calculando Tamanho Total"
 TOTAL_SIZE=$(du -sb \
   --exclude="$TERMUX_FILES/home/storage" \
   --exclude="$TERMUX_FILES/home/.cache" \
+  --exclude="$TERMUX_FILES/home/.ssh" \
   --exclude="*/cache/*" \
   "$TERMUX_FILES/home" "$TERMUX_FILES/usr" 2>/dev/null \
   | awk '{sum+=$1} END {print sum}')
@@ -28,6 +30,7 @@ echo "📦 Backup Em Curso"
 tar -cp \
   --exclude="home/storage" \
   --exclude="home/.cache" \
+  --exclude="home/.ssh" \
   --exclude="*/cache/*" \
   -C "$TERMUX_FILES" home usr \
   | pv -s "$TOTAL_SIZE" \
