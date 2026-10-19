@@ -1,6 +1,5 @@
-# https://github.com/korvahannu/arch-nvidia-drivers-installation-guide
-
 #!/usr/bin/env bash
+# https://github.com/korvahannu/arch-nvidia-drivers-installation-guide
 # shellcheck disable=SC1090,SC2034  # fonte dinamica do os-release; NV_* sao lidas por indirecao (${!v})
 # =============================================================================
 # nvidia.sh — driver NVIDIA no Linux

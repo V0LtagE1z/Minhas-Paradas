@@ -11,7 +11,6 @@ Meus dotfiles de terminal em um script que monta tudo em uma máquina nova, seja
 | `setup.sh` | O script principal: cria o usuário `gustavo`, instala pacotes, locales, oh-my-zsh, powerlevel10k, plugins, Kitty e fontes e aplica os dotfiles. Funciona em distros de desktop, WSL, proot e Termux (veja "Gerenciadores e ambientes") |
 | `nvidia.sh` | Detecta a GPU NVIDIA e instala o driver (open, proprietário ou legado), com modeset, initramfs e PRIME. É independente do `setup.sh` (veja "nvidia.sh") |
 | `oxwm-setup.sh` e `config.lua` | Instalam a configuração do OXWM (gerenciador de janelas X11), migrada do Caelestia/Hyprland (veja "OXWM") |
-| `OXWM/` | Só uma nota (`MIMLeia.md`) sobre mover o `config.lua` para dentro dela |
 | `Distro Normal/` | Dotfiles para distros Linux de desktop |
 | `Distro Proot/` | Dotfiles para distros rodando em proot (proot-distro) |
 | `Termux/` | Dotfiles do Termux e os scripts de backup e restauração (veja "Backup do Termux") |
@@ -25,7 +24,6 @@ Arquivos de cada pasta:
 | `.zshrc` | `Distro Normal/`, `Distro Proot/`, `Termux/` | Configuração do zsh: `fastfetch` ao abrir, oh-my-zsh (plugins `git`, `zsh-autosuggestions`, `fast-syntax-highlighting`, `zsh-history-substring-search`, `fzf`, `history`, `dirhistory`), `zoxide` no lugar do `cd`, `LANG=pt_BR.UTF-8` e `LC_MESSAGES=en_US.UTF-8`. Autosugestão aceita com Ctrl+Espaço ou Ctrl+F, e as setas ↑↓ buscam no histórico pelo trecho digitado. No proot, quando o root abre um shell, ele pergunta se quer atualizar o sistema e repassa a sessão para o `gustavo` |
 | `.p10k.zsh` | `Distro Normal/`, `Distro Proot/`, `Termux/` | Configuração do prompt powerlevel10k |
 | `.p10k-ascii.zsh` | `Distro Normal/` | Versão só ASCII do prompt, usada quando `TERM=linux` (console sem fontes especiais) |
-| `.zsh_history` | `Termux/` | Histórico de comandos do Termux guardado no repo. O `setup.sh` **não** o aplica (só copia `.zshrc` e `.p10k.zsh`) |
 | `Backup_Termux.sh`, `Backup-Restore.sh` | `Termux/` | Backup e restauração do Termux inteiro (veja "Backup do Termux") |
 | `kitty.conf` | `Kitty/` | Fonte (MesloLGS NF), opacidade 0.85 e tamanho da janela do Kitty. É o único arquivo do Kitty que o `setup.sh` copia |
 | `dark-theme.auto.conf`, `no-preference-theme.auto.conf` | `Kitty/` | Cores do Kitty para o tema escuro do sistema e para quando não há preferência. O Kitty (0.38 ou mais novo) carrega arquivos com esses nomes sozinho, mas o `setup.sh` **não** os copia: ponha em `~/.config/kitty/` à mão |
@@ -332,22 +330,21 @@ O que faz (sem `--sem-sistema`), depois de pedir confirmação:
 
 Sempre, também com `--sem-sistema`: copia o `config.lua` para `~/.config/oxwm/` (o antigo vira `config.lua.bak-<data>`) e cria os scripts `screenshot.sh` (tela cheia ou região, copia para a área de transferência), `record.sh` (grava a tela, com ou sem som do sistema; rode de novo para parar) e `powermenu.sh` (menu de energia no `rofi`) em `~/.config/oxwm/scripts/`. A sessão do Hyprland continua intacta.
 
-O `config.lua` usa Super como tecla principal, tags 1 a 8 normais e 9 a 12 "especiais" (`mus`, `com`, `todo`, `sys`: música, comunicação, tarefas e monitor do sistema). Como o OXWM não tem scratchpad, os especiais são tags comuns alternadas por atalho (Super+M, D, R e Ctrl+Shift+Esc). Super+C abre o app do Claude (`claude-desktop`), Super+Shift+R recarrega a configuração, e o wallpaper (`feh`) aponta para `/home/gustavo/Pictures/Wallpapers/Luna E Terra.png`: copie o `Luna E Terra.png` do repo para lá ou ajuste a variável `wallpaper`. A nota `OXWM/MIMLeia.md` lembra de fazer o `oxwm-setup.sh` ler o `config.lua` de dentro dessa pasta; por enquanto ele continua na raiz.
+O `config.lua` usa Super como tecla principal, tags 1 a 8 normais e 9 a 12 "especiais" (`mus`, `com`, `todo`, `sys`: música, comunicação, tarefas e monitor do sistema). Como o OXWM não tem scratchpad, os especiais são tags comuns alternadas por atalho (Super+M, D, R e Ctrl+Shift+Esc). Super+C abre o app do Claude (`claude-desktop`), Super+Shift+R recarrega a configuração, e o wallpaper (`feh`) aponta para `/home/gustavo/Pictures/Wallpapers/Luna E Terra.png`: o `oxwm-setup.sh` copia o `Luna E Terra.png` do repo para lá (sem sobrescrever um arquivo existente); se usar outro usuário, ajuste a variável `wallpaper`.
 
 ## Backup do Termux
 
 Dois scripts em `Termux/`, escritos em zsh e que precisam de `zstd` e `pv` (`pkg install zstd pv`) e do acesso ao armazenamento (`termux-setup-storage`, porque gravam em `~/storage/shared/Documents`):
 
 - **`Backup_Termux.sh`** faz o backup de `home` e `usr` do Termux com `tar` e `zstd -19`, ignorando `home/storage`, `home/.cache` e as pastas `cache`. O arquivo sai em `~/storage/shared/Documents/termux_backup_<data>_<hora>.tar.zst`, com barra de progresso.
-- **`Backup-Restore.sh`** restaura um backup em cima do `home` e do `usr`, **depois de pedir confirmação** (ele sobrescreve arquivos). Aceita o caminho do arquivo como argumento. **Sem argumento, procura `Termux-Backup.tar.zst` em `Documents`**: esse nome não é o que o `Backup_Termux.sh` gera (que leva data e hora), então passe o caminho do backup ou renomeie o arquivo. Depois de restaurar, feche o Termux à força e abra de novo.
+- **`Backup-Restore.sh`** restaura um backup em cima do `home` e do `usr`, **depois de pedir confirmação** (ele sobrescreve arquivos). Aceita o caminho do arquivo como argumento. **Sem argumento, usa o `termux_backup_*.tar.zst` mais recente em `Documents`.** Depois de restaurar, feche o Termux à força e abra de novo.
 
 ## Limitações
 
 - O `emerge` (Gentoo) ainda não é suportado.
 - O `nvidia.sh` foi testado só com cenários simulados, sem hardware NVIDIA no desenvolvimento; só o Arch tem execução real prevista (Fedora, Ubuntu e Debian ficam em `--dry-run`). Rode `./nvidia.sh install --dry-run` e leia o plano antes de instalar.
 - O `oxwm-setup.sh` só funciona em Arch e derivadas (usa `paru` ou `yay` e o AUR), é para X11 e o `config.lua` espera o wallpaper e o `claude-desktop` do seu usuário.
-- O `Backup-Restore.sh` procura por padrão um nome diferente do que o `Backup_Termux.sh` gera (veja "Backup do Termux").
-- O `setup.sh` não copia o `Termux/.zsh_history` nem os temas `*.auto.conf` do Kitty; só `.zshrc`, `.p10k.zsh` e o `kitty.conf`.
+- O `setup.sh` não copia os temas `*.auto.conf` do Kitty; só `.zshrc`, `.p10k.zsh` e o `kitty.conf`.
 - O suporte ao `apk` não foi testado num Alpine ou postmarketOS de verdade (veja "Validação" na seção do Alpine). Wolfi e Chimera são recusados de propósito.
 - Os temas Minecraft e o `--reverter-temas` foram validados com `--dry-run` e com testes em arquivos de exemplo (instalar, reverter e comparar com os originais: `/etc/default/grub`, `mkinitcpio.conf` e `/etc/grub.d`), mas não num boot de verdade. Teste primeiro no Arch com GRUB; Fedora, Debian e Ubuntu só foram escritos a partir da documentação dos dois temas.
 - Encerrar a sessão fecha o shell (ou o terminal) que chamou o script; não faz logout da sessão gráfica.

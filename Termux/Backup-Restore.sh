@@ -16,7 +16,7 @@ BACKUP_DIR="$HOME/storage/shared/Documents"
 if [[ -n "$1" ]]; then
   BACKUP_FILE="$1"
 else
-  BACKUP_FILE=$BACKUP_DIR/Termux-Backup.tar.zst
+  BACKUP_FILE=$(ls -t "$BACKUP_DIR"/termux_backup_*.tar.zst 2>/dev/null | head -n 1)
 fi
 
 if [[ -z "$BACKUP_FILE" || ! -f "$BACKUP_FILE" ]]; then

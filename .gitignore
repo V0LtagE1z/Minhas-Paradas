@@ -1,0 +1,7 @@
+# Históricos de shell e chaves nunca entram no repo
+.zsh_history
+*_history
+.ssh/
+id_*
+*.pem
+*.tar.zst

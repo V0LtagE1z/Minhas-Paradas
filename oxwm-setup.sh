@@ -113,6 +113,9 @@ if [ "$SKIP_SYS" -eq 0 ]; then
     if [ "${#faltando[@]}" -gt 0 ]; then
         echo "Pacotes não encontrados (instale à mão se precisar): ${faltando[*]}"
     fi
+    case " ${faltando[*]} " in
+        *" oxwm-git "*) echo "Erro: o oxwm-git não foi encontrado; sem ele não há o que configurar." >&2; exit 1 ;;
+    esac
     "$helper" -S --needed "${ok[@]}"
 
     sudo mkdir -p /etc/X11/xorg.conf.d
@@ -208,6 +211,12 @@ if [ -f "$dest/config.lua" ]; then
     echo "Config antiga salva em $bak"
 fi
 cp "$here/config.lua" "$dest/config.lua"
+
+# O config.lua aponta o feh para ~/Pictures/Wallpapers/Luna E Terra.png.
+if [ -f "$here/Luna E Terra.png" ]; then
+    mkdir -p "$HOME/Pictures/Wallpapers"
+    cp -n "$here/Luna E Terra.png" "$HOME/Pictures/Wallpapers/"
+fi
 
 # ------------------------------------------------------------------ startx
 setup_startx() {
