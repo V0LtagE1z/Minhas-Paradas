@@ -100,6 +100,10 @@ build_oxwm() {
         fedora) deps=(git pkgconf-pkg-config libX11-devel libXft-devel freetype-devel fontconfig-devel libXinerama-devel) ;;
     esac
     pm_install "${deps[@]}"
+    if ! command -v zig >/dev/null 2>&1; then
+        echo "Erro: o zig não está nos repositórios da distro. Instale por https://ziglang.org/download e rode de novo." >&2
+        exit 1
+    fi
     src="$(mktemp -d)"
     git clone --depth 1 https://github.com/tonybanters/oxwm "$src/oxwm"
     (cd "$src/oxwm" && zig build -Doptimize=ReleaseSmall --prefix "$src/out")
@@ -166,8 +170,7 @@ if [ "$SKIP_SYS" -eq 0 ]; then
             exit 1
         fi
     elif ! command -v zig >/dev/null 2>&1; then
-        echo "Erro: preciso do zig para compilar o oxwm (https://ziglang.org/download). Instale e rode de novo." >&2
-        exit 1
+        PKGS+=(zig)
     fi
 
     echo
