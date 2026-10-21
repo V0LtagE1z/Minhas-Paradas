@@ -42,8 +42,77 @@ if [ ! -f "$here/config.lua" ]; then
     exit 1
 fi
 
+# ------------------------------------------------------------------ distro
+# shortcut: só Arch, Debian/Ubuntu e Fedora (e derivadas); outras usam --sem-sistema.
+family=other
+if [ -r /etc/os-release ]; then
+    . /etc/os-release
+    case " ${ID:-} ${ID_LIKE:-} " in
+        *" arch "*) family=arch ;;
+        *" debian "* | *" ubuntu "*) family=debian ;;
+        *" fedora "* | *" rhel "*) family=fedora ;;
+    esac
+fi
+if [ "$SKIP_SYS" -eq 0 ] && [ "$family" = other ]; then
+    echo "Erro: distro sem suporte para instalar pacotes (só Arch, Debian/Ubuntu e Fedora)." >&2
+    echo "Instale o oxwm e as dependências à mão e rode: bash oxwm-setup.sh --sem-sistema" >&2
+    exit 1
+fi
+
+# Os nomes em PKGS são os do Arch; aqui viram os da distro. Sem tradução = mesmo nome.
+native_name() {
+    case "$family:$1" in
+        debian:xorg-server) echo xserver-xorg ;;
+        debian:xorg-setxkbmap) echo x11-xkb-utils ;;
+        debian:xorg-xinit) echo xinit ;;
+        debian:libnotify) echo libnotify-bin ;;
+        debian:network-manager-applet) echo network-manager-gnome ;;
+        fedora:xorg-server) echo xorg-x11-server-Xorg ;;
+        fedora:xorg-setxkbmap) echo setxkbmap ;;
+        fedora:xorg-xinit) echo xorg-x11-xinit ;;
+        fedora:thunar) echo Thunar ;;
+        fedora:lightdm-gtk-greeter) echo lightdm-gtk ;;
+        *) echo "$1" ;;
+    esac
+}
+
+pm_has() {
+    case "$family" in
+        arch) "$helper" -Si "$1" ;;
+        debian) apt-cache show "$1" ;;
+        fedora) dnf -q info "$1" ;;
+    esac >/dev/null 2>&1
+}
+
+pm_install() {
+    case "$family" in
+        arch) "$helper" -S --needed "$@" ;;
+        debian) sudo apt-get install -y "$@" ;;
+        fedora) sudo dnf install -y "$@" ;;
+    esac
+}
+
+# Fora do Arch não há AUR: compila o oxwm (zig) num prefixo temporário e copia para /usr/local.
+build_oxwm() {
+    local deps=() src
+    case "$family" in
+        debian) deps=(git pkg-config libx11-dev libxft-dev libfreetype-dev libfontconfig-dev libxinerama-dev) ;;
+        fedora) deps=(git pkgconf-pkg-config libX11-devel libXft-devel freetype-devel fontconfig-devel libXinerama-devel) ;;
+    esac
+    pm_install "${deps[@]}"
+    src="$(mktemp -d)"
+    git clone --depth 1 https://github.com/tonybanters/oxwm "$src/oxwm"
+    (cd "$src/oxwm" && zig build -Doptimize=ReleaseSmall --prefix "$src/out")
+    sudo cp -a "$src/out/." /usr/local/
+    rm -rf "$src"
+    if [ ! -x /usr/local/bin/oxwm ]; then
+        echo "Erro: a compilação não gerou /usr/local/bin/oxwm." >&2
+        exit 1
+    fi
+}
+
 PKGS=(
-    oxwm-git xorg-server xorg-setxkbmap xcape xdotool xclip feh
+    xorg-server xorg-setxkbmap xcape xdotool xclip feh
     maim slop flameshot xcolor ffmpeg
     i3lock xss-lock rofi rofi-emoji clipmenu dunst libnotify
     kitty micro thunar btop playerctl brightnessctl wireplumber
@@ -83,21 +152,28 @@ case "$dm" in
     sddm) PKGS+=(sddm) ;;
     lightdm) PKGS+=(lightdm lightdm-gtk-greeter) ;;
 esac
+if [ "$family" = arch ]; then PKGS+=(oxwm-git); fi
 
 # ------------------------------------------------------------------ sistema
 if [ "$SKIP_SYS" -eq 0 ]; then
     helper=""
-    for h in paru yay; do
-        if command -v "$h" >/dev/null 2>&1; then helper="$h"; break; fi
-    done
-    if [ -z "$helper" ]; then
-        echo "Erro: preciso de paru ou yay (o oxwm-git vem do AUR)." >&2
+    if [ "$family" = arch ]; then
+        for h in paru yay; do
+            if command -v "$h" >/dev/null 2>&1; then helper="$h"; break; fi
+        done
+        if [ -z "$helper" ]; then
+            echo "Erro: preciso de paru ou yay (o oxwm-git vem do AUR)." >&2
+            exit 1
+        fi
+    elif ! command -v zig >/dev/null 2>&1; then
+        echo "Erro: preciso do zig para compilar o oxwm (https://ziglang.org/download). Instale e rode de novo." >&2
         exit 1
     fi
 
     echo
     echo "Vou fazer o seguinte:"
-    echo "  - instalar (com $helper) os pacotes que ainda faltam"
+    echo "  - instalar (com ${helper:-o gerenciador de pacotes da distro}) os pacotes que ainda faltam"
+    if [ "$family" != arch ]; then echo "  - compilar o oxwm com zig e instalar em /usr/local"; fi
     echo "  - criar /etc/X11/xorg.conf.d/40-flat-accel.conf (mouse sem aceleração)"
     if [ "$want_startx" -eq 1 ]; then echo "  - criar ~/.xinitrc (iniciar com startx)"; fi
     if [ -n "$dm" ]; then echo "  - instalar e habilitar o $dm (vale a partir do próximo boot)"; fi
@@ -105,15 +181,18 @@ if [ "$SKIP_SYS" -eq 0 ]; then
     read -r -p "Continuar? [s/N] " ans || ans=""
     [[ "$ans" =~ ^[sS]$ ]] || exit 0
 
+    if [ "$family" = debian ]; then sudo apt-get update; fi
     ok=()
     faltando=()
     for p in "${PKGS[@]}"; do
-        if "$helper" -Si "$p" >/dev/null 2>&1; then ok+=("$p"); else faltando+=("$p"); fi
+        n="$(native_name "$p")"
+        if pm_has "$n"; then ok+=("$n"); else faltando+=("$p"); fi
     done
     if [ "${#faltando[@]}" -gt 0 ]; then
         echo "Pacotes não encontrados (instale à mão se precisar): ${faltando[*]}"
     fi
-    "$helper" -S --needed "${ok[@]}"
+    pm_install "${ok[@]}"
+    if [ "$family" != arch ]; then build_oxwm; fi
 
     sudo mkdir -p /etc/X11/xorg.conf.d
     sudo tee /etc/X11/xorg.conf.d/40-flat-accel.conf >/dev/null <<'EOF_XORG'
