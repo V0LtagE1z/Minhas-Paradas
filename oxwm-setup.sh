@@ -51,12 +51,23 @@ if [ -r /etc/os-release ]; then
         *" arch "*) family=arch ;;
         *" debian "* | *" ubuntu "*) family=debian ;;
         *" fedora "* | *" rhel "*) family=fedora ;;
+        *" suse "* | *" opensuse "*) family=suse ;;
+        *" alpine "*) family=alpine ;;
     esac
 fi
 if [ "$SKIP_SYS" -eq 0 ] && [ "$family" = other ]; then
-    echo "Erro: distro sem suporte para instalar pacotes (só Arch, Debian/Ubuntu e Fedora)." >&2
+    echo "Erro: distro sem suporte para instalar pacotes (só Arch, Debian/Ubuntu, Fedora, openSUSE e Alpine)." >&2
     echo "Instale o oxwm e as dependências à mão e rode: bash oxwm-setup.sh --sem-sistema" >&2
     exit 1
+fi
+
+# Alpine/containers costumam não ter sudo: usa doas, ou roda direto como root.
+if ! command -v sudo >/dev/null 2>&1; then
+    if [ "$(id -u)" -eq 0 ]; then
+        sudo() { "$@"; }
+    elif command -v doas >/dev/null 2>&1; then
+        sudo() { doas "$@"; }
+    fi
 fi
 
 # Os nomes em PKGS são os do Arch; aqui viram os da distro. Sem tradução = mesmo nome.
@@ -72,6 +83,16 @@ native_name() {
         fedora:xorg-xinit) echo xorg-x11-xinit ;;
         fedora:thunar) echo Thunar ;;
         fedora:lightdm-gtk-greeter) echo lightdm-gtk ;;
+        suse:xorg-server) echo xorg-x11-server ;;
+        suse:xorg-setxkbmap) echo setxkbmap ;;
+        suse:xorg-xinit) echo xinit ;;
+        suse:thunar) echo Thunar ;;
+        suse:micro) echo micro-editor ;;
+        suse:libnotify) echo libnotify-tools ;;
+        suse:network-manager-applet) echo NetworkManager-applet ;;
+        alpine:xorg-setxkbmap) echo setxkbmap ;;
+        alpine:xorg-xinit) echo xinit ;;
+        alpine:ttf-jetbrains-mono-nerd) echo font-jetbrains-mono-nerd ;;
         *) echo "$1" ;;
     esac
 }
@@ -81,14 +102,21 @@ pm_has() {
         arch) "$helper" -Si "$1" ;;
         debian) apt-cache show "$1" ;;
         fedora) dnf -q info "$1" ;;
+        suse) zypper -n info "$1" ;;
+        alpine) [ -n "$(apk search -e "$1")" ] ;;
     esac >/dev/null 2>&1
 }
 
 pm_install() {
+    local rc=0
     case "$family" in
         arch) "$helper" -S --needed "$@" ;;
         debian) sudo apt-get install -y "$@" ;;
         fedora) sudo dnf install -y "$@" ;;
+        suse) # 102/103/106 = instalou, com pendência (reiniciar, etc.); mesmo critério do setup.sh
+            sudo zypper --non-interactive install "$@" || rc=$?
+            case "$rc" in 0 | 102 | 103 | 106) ;; *) return "$rc" ;; esac ;;
+        alpine) sudo apk add "$@" ;;
     esac
 }
 
@@ -98,6 +126,8 @@ build_oxwm() {
     case "$family" in
         debian) deps=(git pkg-config libx11-dev libxft-dev libfreetype-dev libfontconfig-dev libxinerama-dev) ;;
         fedora) deps=(git pkgconf-pkg-config libX11-devel libXft-devel freetype-devel fontconfig-devel libXinerama-devel) ;;
+        suse) deps=(git pkg-config libX11-devel libXft-devel freetype2-devel fontconfig-devel libXinerama-devel) ;;
+        alpine) deps=(git pkgconf libx11-dev libxft-dev freetype-dev fontconfig-dev libxinerama-dev) ;;
     esac
     pm_install "${deps[@]}"
     if ! command -v zig >/dev/null 2>&1; then
@@ -184,7 +214,12 @@ if [ "$SKIP_SYS" -eq 0 ]; then
     read -r -p "Continuar? [s/N] " ans || ans=""
     [[ "$ans" =~ ^[sS]$ ]] || exit 0
 
-    if [ "$family" = debian ]; then sudo apt-get update; fi
+    # índice atualizado, senão o pm_has acha que pacotes existentes não existem
+    case "$family" in
+        debian) sudo apt-get update ;;
+        suse) sudo zypper --non-interactive refresh ;;
+        alpine) sudo apk update ;;
+    esac
     ok=()
     faltando=()
     for p in "${PKGS[@]}"; do
@@ -335,7 +370,12 @@ EOF_DESK
 
     # --force troca o gerenciador atual. Não inicia agora para não derrubar
     # a sessão aberta; vale a partir do próximo boot.
-    sudo systemctl enable --force "$svc"
+    if command -v systemctl >/dev/null 2>&1; then
+        sudo systemctl enable --force "$svc"
+    else
+        # shortcut: OpenRC (Alpine) só liga o DM; não desliga outro já ligado e elogind/dbus/seatd ficam por sua conta
+        sudo rc-update add "$name" default
+    fi
 }
 
 if [ "$want_startx" -eq 1 ]; then setup_startx; fi
