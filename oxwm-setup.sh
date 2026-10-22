@@ -12,12 +12,14 @@ Uso: bash oxwm-setup.sh [opções]
   --dm=lightdm    instala e habilita o LightDM (com o greeter gtk)
   --sem-sistema   só copia os arquivos do usuário: sem pacotes, sem /etc e
                   sem gerenciador de login (--startx continua valendo)
+  --dry-run, -n   mostra o que seria feito (linhas [dry]) sem alterar nada
 
 Sem opções, o script pergunta como você quer iniciar o OXWM.
 EOF_USAGE
 }
 
 SKIP_SYS=0
+DRY_RUN=0
 want_startx=0
 dm=""
 flags_given=0
@@ -25,6 +27,7 @@ flags_given=0
 for arg in "$@"; do
     case "$arg" in
         --sem-sistema) SKIP_SYS=1 ;;
+        --dry-run | -n) DRY_RUN=1 ;;
         --startx) want_startx=1; flags_given=1 ;;
         --dm=sddm | --dm=lightdm) dm="${arg#--dm=}"; flags_given=1 ;;
         --dm=*) echo "Gerenciador inválido: use --dm=sddm ou --dm=lightdm." >&2; exit 1 ;;
@@ -42,8 +45,133 @@ if [ ! -f "$here/config.lua" ]; then
     exit 1
 fi
 
+# ------------------------------------------------------------------ distro
+# shortcut: só Arch, Debian/Ubuntu e Fedora (e derivadas); outras usam --sem-sistema.
+family=other
+if [ -r /etc/os-release ]; then
+    . /etc/os-release
+    case " ${ID:-} ${ID_LIKE:-} " in
+        *" arch "*) family=arch ;;
+        *" debian "* | *" ubuntu "*) family=debian ;;
+        *" fedora "* | *" rhel "*) family=fedora ;;
+        *" suse "* | *" opensuse "*) family=suse ;;
+        *" alpine "*) family=alpine ;;
+    esac
+fi
+if [ "$SKIP_SYS" -eq 0 ] && [ "$family" = other ]; then
+    echo "Erro: distro sem suporte para instalar pacotes (só Arch, Debian/Ubuntu, Fedora, openSUSE e Alpine)." >&2
+    echo "Instale o oxwm e as dependências à mão e rode: bash oxwm-setup.sh --sem-sistema" >&2
+    exit 1
+fi
+
+# Alpine/containers costumam não ter sudo: usa doas, ou roda direto como root.
+if ! command -v sudo >/dev/null 2>&1; then
+    if [ "$(id -u)" -eq 0 ]; then
+        sudo() { "$@"; }
+    elif command -v doas >/dev/null 2>&1; then
+        sudo() { doas "$@"; }
+    fi
+fi
+
+# --dry-run: run() só imprime o comando e escrever() só informa o arquivo (formato [dry] do setup.sh).
+# Imprime em stderr: alguns comandos rodam com ">/dev/null" e o [dry] sumiria.
+run() {
+    if [ "$DRY_RUN" -eq 1 ]; then
+        local a
+        printf '\033[1;36m[dry]\033[0m' >&2
+        for a in "$@"; do
+            # argumentos simples saem como estão; os demais entre aspas simples (como no setup.sh)
+            if [[ $a =~ ^[A-Za-z0-9_@%+=:,./-]+$ ]]; then printf ' %s' "$a" >&2
+            elif [[ $a != *\'* ]]; then printf " '%s'" "$a" >&2
+            else printf ' %q' "$a" >&2; fi
+        done
+        echo >&2
+        return 0
+    fi
+    "$@"
+}
+escrever() {
+    if [ "$DRY_RUN" -eq 1 ]; then printf '\033[1;36m[dry]\033[0m escrever %s\n' "$1" >&2; return 0; fi
+    cat > "$1"
+}
+
+# Os nomes em PKGS são os do Arch; aqui viram os da distro. Sem tradução = mesmo nome.
+native_name() {
+    case "$family:$1" in
+        debian:xorg-server) echo xserver-xorg ;;
+        debian:xorg-setxkbmap) echo x11-xkb-utils ;;
+        debian:xorg-xinit) echo xinit ;;
+        debian:libnotify) echo libnotify-bin ;;
+        debian:network-manager-applet) echo network-manager-gnome ;;
+        fedora:xorg-server) echo xorg-x11-server-Xorg ;;
+        fedora:xorg-setxkbmap) echo setxkbmap ;;
+        fedora:xorg-xinit) echo xorg-x11-xinit ;;
+        fedora:thunar) echo Thunar ;;
+        fedora:lightdm-gtk-greeter) echo lightdm-gtk ;;
+        suse:xorg-server) echo xorg-x11-server ;;
+        suse:xorg-setxkbmap) echo setxkbmap ;;
+        suse:xorg-xinit) echo xinit ;;
+        suse:thunar) echo Thunar ;;
+        suse:micro) echo micro-editor ;;
+        suse:libnotify) echo libnotify-tools ;;
+        suse:network-manager-applet) echo NetworkManager-applet ;;
+        alpine:xorg-setxkbmap) echo setxkbmap ;;
+        alpine:xorg-xinit) echo xinit ;;
+        alpine:ttf-jetbrains-mono-nerd) echo font-jetbrains-mono-nerd ;;
+        *) echo "$1" ;;
+    esac
+}
+
+pm_has() {
+    case "$family" in
+        arch) "$helper" -Si "$1" ;;
+        debian) apt-cache show "$1" ;;
+        fedora) dnf -q info "$1" ;;
+        suse) zypper -n info "$1" ;;
+        alpine) [ -n "$(apk search -e "$1")" ] ;;
+    esac >/dev/null 2>&1
+}
+
+pm_install() {
+    local rc=0
+    case "$family" in
+        arch) run "$helper" -S --needed "$@" ;;
+        debian) run sudo apt-get install -y "$@" ;;
+        fedora) run sudo dnf install -y "$@" ;;
+        suse) # 102/103/106 = instalou, com pendência (reiniciar, etc.); mesmo critério do setup.sh
+            run sudo zypper --non-interactive install "$@" || rc=$?
+            case "$rc" in 0 | 102 | 103 | 106) ;; *) return "$rc" ;; esac ;;
+        alpine) run sudo apk add "$@" ;;
+    esac
+}
+
+# Fora do Arch não há AUR: compila o oxwm (zig) num prefixo temporário e copia para /usr/local.
+build_oxwm() {
+    local deps=() src
+    case "$family" in
+        debian) deps=(git pkg-config libx11-dev libxft-dev libfreetype-dev libfontconfig-dev libxinerama-dev) ;;
+        fedora) deps=(git pkgconf-pkg-config libX11-devel libXft-devel freetype-devel fontconfig-devel libXinerama-devel) ;;
+        suse) deps=(git pkg-config libX11-devel libXft-devel freetype2-devel fontconfig-devel libXinerama-devel) ;;
+        alpine) deps=(git pkgconf libx11-dev libxft-dev freetype-dev fontconfig-dev libxinerama-dev) ;;
+    esac
+    pm_install "${deps[@]}"
+    if [ "$DRY_RUN" -eq 0 ] && ! command -v zig >/dev/null 2>&1; then
+        echo "Erro: o zig não está nos repositórios da distro. Instale por https://ziglang.org/download e rode de novo." >&2
+        exit 1
+    fi
+    if [ "$DRY_RUN" -eq 1 ]; then src=/tmp/oxwm-build; else src="$(mktemp -d)"; fi
+    run git clone --depth 1 https://github.com/tonybanters/oxwm "$src/oxwm"
+    run bash -c 'cd "$1" && zig build -Doptimize=ReleaseSmall --prefix "$2"' _ "$src/oxwm" "$src/out"
+    run sudo cp -a "$src/out/." /usr/local/
+    run rm -rf "$src"
+    if [ "$DRY_RUN" -eq 0 ] && [ ! -x /usr/local/bin/oxwm ]; then
+        echo "Erro: a compilação não gerou /usr/local/bin/oxwm." >&2
+        exit 1
+    fi
+}
+
 PKGS=(
-    oxwm-git xorg-server xorg-setxkbmap xcape xdotool xclip feh
+    xorg-server xorg-setxkbmap xcape xdotool xclip feh
     maim slop flameshot xcolor ffmpeg
     i3lock xss-lock rofi rofi-emoji clipmenu dunst libnotify
     kitty micro thunar btop playerctl brightnessctl wireplumber
@@ -83,40 +211,57 @@ case "$dm" in
     sddm) PKGS+=(sddm) ;;
     lightdm) PKGS+=(lightdm lightdm-gtk-greeter) ;;
 esac
+if [ "$family" = arch ]; then PKGS+=(oxwm-git); fi
 
 # ------------------------------------------------------------------ sistema
 if [ "$SKIP_SYS" -eq 0 ]; then
     helper=""
-    for h in paru yay; do
-        if command -v "$h" >/dev/null 2>&1; then helper="$h"; break; fi
-    done
-    if [ -z "$helper" ]; then
-        echo "Erro: preciso de paru ou yay (o oxwm-git vem do AUR)." >&2
-        exit 1
+    if [ "$family" = arch ]; then
+        for h in paru yay; do
+            if command -v "$h" >/dev/null 2>&1; then helper="$h"; break; fi
+        done
+        if [ -z "$helper" ]; then
+            echo "Erro: preciso de paru ou yay (o oxwm-git vem do AUR)." >&2
+            exit 1
+        fi
+    elif ! command -v zig >/dev/null 2>&1; then
+        PKGS+=(zig)
     fi
 
     echo
     echo "Vou fazer o seguinte:"
-    echo "  - instalar (com $helper) os pacotes que ainda faltam"
+    echo "  - instalar (com ${helper:-o gerenciador de pacotes da distro}) os pacotes que ainda faltam"
+    if [ "$family" != arch ]; then echo "  - compilar o oxwm com zig e instalar em /usr/local"; fi
     echo "  - criar /etc/X11/xorg.conf.d/40-flat-accel.conf (mouse sem aceleração)"
     if [ "$want_startx" -eq 1 ]; then echo "  - criar ~/.xinitrc (iniciar com startx)"; fi
     if [ -n "$dm" ]; then echo "  - instalar e habilitar o $dm (vale a partir do próximo boot)"; fi
     echo "  - copiar a config para $dest"
-    read -r -p "Continuar? [s/N] " ans || ans=""
-    [[ "$ans" =~ ^[sS]$ ]] || exit 0
+    if [ "$DRY_RUN" -eq 0 ]; then
+        read -r -p "Continuar? [s/N] " ans || ans=""
+        [[ "$ans" =~ ^[sS]$ ]] || exit 0
+    fi
 
+    # índice atualizado, senão o pm_has acha que pacotes existentes não existem
+    # shortcut: no --dry-run o índice não é atualizado, então a lista de "não encontrados" pode vir desatualizada
+    case "$family" in
+        debian) run sudo apt-get update ;;
+        suse) run sudo zypper --non-interactive refresh ;;
+        alpine) run sudo apk update ;;
+    esac
     ok=()
     faltando=()
     for p in "${PKGS[@]}"; do
-        if "$helper" -Si "$p" >/dev/null 2>&1; then ok+=("$p"); else faltando+=("$p"); fi
+        n="$(native_name "$p")"
+        if pm_has "$n"; then ok+=("$n"); else faltando+=("$p"); fi
     done
     if [ "${#faltando[@]}" -gt 0 ]; then
         echo "Pacotes não encontrados (instale à mão se precisar): ${faltando[*]}"
     fi
-    "$helper" -S --needed "${ok[@]}"
+    pm_install "${ok[@]}"
+    if [ "$family" != arch ]; then build_oxwm; fi
 
-    sudo mkdir -p /etc/X11/xorg.conf.d
-    sudo tee /etc/X11/xorg.conf.d/40-flat-accel.conf >/dev/null <<'EOF_XORG'
+    run sudo mkdir -p /etc/X11/xorg.conf.d
+    run sudo tee /etc/X11/xorg.conf.d/40-flat-accel.conf >/dev/null <<'EOF_XORG'
 Section "InputClass"
     Identifier "flat accel"
     MatchIsPointer "yes"
@@ -127,10 +272,10 @@ EOF_XORG
 fi
 
 # ------------------------------------------------------------------ arquivos
-mkdir -p "$dest/scripts"
+run mkdir -p "$dest/scripts"
 
 # ---------------------------------------------------------------- screenshot
-cat > "$dest/scripts/screenshot.sh" <<'EOF_SHOT'
+escrever "$dest/scripts/screenshot.sh" <<'EOF_SHOT'
 #!/usr/bin/env bash
 # uso: screenshot.sh full|region
 dir="${XDG_PICTURES_DIR:-$HOME/Pictures}/Screenshots"
@@ -145,7 +290,7 @@ notify-send -i "$file" "Screenshot salva" "$file"
 EOF_SHOT
 
 # ---------------------------------------------------------------- gravação
-cat > "$dest/scripts/record.sh" <<'EOF_REC'
+escrever "$dest/scripts/record.sh" <<'EOF_REC'
 #!/usr/bin/env bash
 # uso: record.sh full|sound|region   (rode de novo para parar)
 mode="${1:-full}"
@@ -186,7 +331,7 @@ notify-send "Gravação iniciada ($mode)" "Repita o atalho para parar."
 EOF_REC
 
 # ---------------------------------------------------------------- energia
-cat > "$dest/scripts/powermenu.sh" <<'EOF_PWR'
+escrever "$dest/scripts/powermenu.sh" <<'EOF_PWR'
 #!/usr/bin/env bash
 confirm() { [ "$(printf 'Não\nSim\n' | rofi -dmenu -i -p "$1?")" = "Sim" ]; }
 choice="$(printf '%s\n' "Bloquear" "Suspender" "Sair da sessão" "Reiniciar" "Desligar" \
@@ -200,24 +345,24 @@ case "$choice" in
 esac
 EOF_PWR
 
-chmod +x "$dest/scripts/"*.sh
+run chmod +x "$dest/scripts/"*.sh
 
 if [ -f "$dest/config.lua" ]; then
     bak="$dest/config.lua.bak-$(date +%F_%H-%M-%S)"
-    cp "$dest/config.lua" "$bak"
+    run cp "$dest/config.lua" "$bak"
     echo "Config antiga salva em $bak"
 fi
-cp "$here/config.lua" "$dest/config.lua"
+run cp "$here/config.lua" "$dest/config.lua"
 
 # ------------------------------------------------------------------ startx
 setup_startx() {
     local rc="$HOME/.xinitrc"
     if [ -f "$rc" ]; then
         local bak="$rc.bak-$(date +%F_%H-%M-%S)"
-        cp "$rc" "$bak"
+        run cp "$rc" "$bak"
         echo "~/.xinitrc antigo salvo em $bak"
     fi
-    cat > "$rc" <<'EOF_XINIT'
+    escrever "$rc" <<'EOF_XINIT'
 #!/bin/sh
 # Gerado por oxwm-setup.sh
 if command -v dbus-update-activation-environment >/dev/null 2>&1; then
@@ -225,7 +370,7 @@ if command -v dbus-update-activation-environment >/dev/null 2>&1; then
 fi
 exec oxwm
 EOF_XINIT
-    chmod +x "$rc"
+    run chmod +x "$rc"
 }
 
 # ------------------------------------------------- gerenciador de login (DM)
@@ -237,8 +382,8 @@ setup_dm() {
 
     # O oxwm-git normalmente já instala a sessão; só cria se estiver faltando.
     if [ ! -f /usr/share/xsessions/oxwm.desktop ]; then
-        sudo mkdir -p /usr/share/xsessions
-        sudo tee /usr/share/xsessions/oxwm.desktop >/dev/null <<'EOF_DESK'
+        run sudo mkdir -p /usr/share/xsessions
+        run sudo tee /usr/share/xsessions/oxwm.desktop >/dev/null <<'EOF_DESK'
 [Desktop Entry]
 Name=OXWM
 Comment=OXWM window manager
@@ -248,18 +393,28 @@ EOF_DESK
     fi
 
     if [ "$name" = lightdm ] && [ -f /etc/lightdm/lightdm.conf ]; then
-        sudo sed -i 's/^#\?greeter-session=.*/greeter-session=lightdm-gtk-greeter/' /etc/lightdm/lightdm.conf
+        run sudo sed -i 's/^#\?greeter-session=.*/greeter-session=lightdm-gtk-greeter/' /etc/lightdm/lightdm.conf
     fi
 
     # --force troca o gerenciador atual. Não inicia agora para não derrubar
     # a sessão aberta; vale a partir do próximo boot.
-    sudo systemctl enable --force "$svc"
+    if command -v systemctl >/dev/null 2>&1; then
+        run sudo systemctl enable --force "$svc"
+    else
+        # shortcut: OpenRC (Alpine) só liga o DM; não desliga outro já ligado e elogind/dbus/seatd ficam por sua conta
+        run sudo rc-update add "$name" default
+    fi
 }
 
 if [ "$want_startx" -eq 1 ]; then setup_startx; fi
 if [ -n "$dm" ]; then setup_dm "$dm"; fi
 
 # --------------------------------------------------------------------- fim
+if [ "$DRY_RUN" -eq 1 ]; then
+    echo
+    echo "Dry-run: nada foi alterado."
+    exit 0
+fi
 echo
 echo "Pronto. Configuração em $dest"
 if [ "$want_startx" -eq 1 ]; then
