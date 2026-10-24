@@ -109,6 +109,15 @@ PACMAN_SYNCED=0          # 1 = um pacman -Syu/-Syyu completo já rodou depois da
 CACHYOS_REPO="${CACHYOS_REPO:-auto}"
 CACHYOS_REPO_URL="${CACHYOS_REPO_URL:-https://mirror.cachyos.org/cachyos-repo.tar.xz}"
 
+# Kernel do CachyOS no Fedora (COPR bieszczaders, o mesmo que o README do linux-cachyos aponta):
+#   ask = pergunta no fim da etapa de sistema (padrão; sem terminal a resposta é não); 1 = instala sem perguntar;
+#   0 = pula. Também: --kernel-cachyos e --sem-kernel-cachyos.
+#   CACHYOS_KERNEL_VARIANT: kernel-cachyos (padrão) | kernel-cachyos-lto | kernel-cachyos-lts |
+#   kernel-cachyos-lts-lto | kernel-cachyos-rt | kernel-cachyos-server
+CACHYOS_KERNEL="${CACHYOS_KERNEL:-ask}"
+CACHYOS_KERNEL_VARIANT="${CACHYOS_KERNEL_VARIANT:-kernel-cachyos}"
+LD_SO="${LD_SO:-/lib64/ld-linux-x86-64.so.2}"   # só para testes: quem informa os níveis x86-64 da CPU
+
 # apk (Alpine e postmarketOS):
 #   FORCE_APK=1       aceita apk mesmo em Wolfi/Chimera ou com glibc/dinit (sem garantia nenhuma);
 #   SKIP_APK_REPOS=1  não mexe em /etc/apk/repositories (é lá que o community é habilitado);
@@ -271,7 +280,9 @@ Uso: bash setup.sh [--dry-run]
   --reverter-temas        desfaz os temas Minecraft (GRUB + Plymouth) e sai; não faz mais nada
   --cachyos-repo          instala os repositórios do CachyOS mesmo em derivadas fora da lista automática
   --sem-cachyos-repo      não instala os repositórios do CachyOS
-  --help, -h              mostra esta ajuda
+  --kernel-cachyos        Fedora: instala o kernel do CachyOS (COPR) sem perguntar
+  --sem-kernel-cachyos    Fedora: não instala o kernel do CachyOS e não pergunta
+  --help, -h             mostra esta ajuda
 
 No fim o script pergunta se você quer encerrar a sessão (fecha o shell que chamou o script).
 
@@ -286,6 +297,8 @@ Variáveis úteis: NEW_USER (padrão: gustavo), REPO_URL, REPO_DIR,
                  SKIP_PACMAN_REPOS=1 (não mexer em core/extra/multilib no pacman.conf),
                  CACHYOS_REPO=auto|1|0 (repositórios do CachyOS: só Arch/EndeavourOS | forçar | pular),
                  CACHYOS_SEM_SNAPSHOT=1 (instala os repos do CachyOS mesmo sem poder tirar snapshot do snapper),
+                 CACHYOS_KERNEL=ask|1|0 (kernel do CachyOS no Fedora: perguntar | instalar | pular),
+                 CACHYOS_KERNEL_VARIANT=kernel-cachyos|kernel-cachyos-lto|kernel-cachyos-lts|kernel-cachyos-lts-lto|kernel-cachyos-rt|kernel-cachyos-server,
                  SKIP_APK_REPOS=1 (Alpine: não habilitar o repositório community em /etc/apk/repositories),
                  FORCE_APK=1 (aceita apk mesmo em Wolfi/Chimera ou com glibc/dinit; sem garantia de que funcione),
                  MC_THEMES=1|0 (o mesmo que --temas-minecraft / --sem-temas-minecraft; no Alpine é ignorado).
@@ -305,6 +318,8 @@ parse_args() {
       --reverter-temas)       REVERT_MC=1 ;;
       --cachyos-repo)         CACHYOS_REPO=1 ;;
       --sem-cachyos-repo)     CACHYOS_REPO=0 ;;
+      --kernel-cachyos)       CACHYOS_KERNEL=1 ;;
+      --sem-kernel-cachyos)   CACHYOS_KERNEL=0 ;;
       -h|--help)    usage; exit 0 ;;
       *)            die "Opção desconhecida: $a (veja: bash setup.sh --help)" ;;
     esac
@@ -936,6 +951,58 @@ setup_cachyos_repo() {
   sync_pacman_repos
 }
 
+# ─── Kernel do CachyOS no Fedora (COPR) ───────────────────────────────────────
+# Mesmo que: sudo dnf copr enable bieszczaders/kernel-cachyos && sudo dnf install kernel-cachyos kernel-cachyos-devel-matched
+# (variantes -lto vêm do COPR bieszczaders/kernel-cachyos-lto). Receita: https://github.com/CachyOS/copr-linux-cachyos
+# O kernel novo entra ao lado do kernel do Fedora, que continua no menu do GRUB como saída de emergência.
+setup_cachyos_kernel() {
+  [[ $PM == dnf ]] && has_bootloader || return 0   # WSL e proot não escolhem kernel
+  [[ $(os_id) == fedora ]] || { [[ $CACHYOS_KERNEL == 1 ]] && warn "kernel CachyOS: o COPR é só para Fedora (aqui: '$(os_id)'); pulando"; return 0; }
+  if [[ $CACHYOS_KERNEL == 0 ]]; then log "kernel CachyOS: etapa pulada (--sem-kernel-cachyos)"; return 0; fi
+  local arch=${UNAME_M:-$(uname -m 2>/dev/null || true)} var=$CACHYOS_KERNEL_VARIANT copr=bieszczaders/kernel-cachyos lvl=v3 plug
+  if [[ $arch != x86_64 ]]; then log "kernel CachyOS: o COPR só tem x86_64 (aqui: $arch); pulando"; return 0; fi
+  if [[ -e /run/ostree-booted ]]; then
+    warn "kernel CachyOS: Silverblue/Kinoite (rpm-ostree) não é suportado por este script; veja o README do copr-linux-cachyos"; return 0
+  fi
+  case $var in
+    kernel-cachyos|kernel-cachyos-lto|kernel-cachyos-rt) ;;
+    kernel-cachyos-lts|kernel-cachyos-lts-lto|kernel-cachyos-server) lvl=v2 ;;   # o README só pede v2 nestas
+    *) warn "kernel CachyOS: variante desconhecida '$var' (CACHYOS_KERNEL_VARIANT); pulando"; return 0 ;;
+  esac
+  if [[ $var == *-lto ]]; then copr=bieszczaders/kernel-cachyos-lto; fi
+  if ! grep -q "x86-64-$lvl (supported" < <("$LD_SO" --help 2>/dev/null); then
+    warn "kernel CachyOS: a CPU não mostra x86-64-$lvl como suportado, exigido por $var (confira: $LD_SO --help | grep supported); pulando"; return 0
+  fi
+  if [[ $CACHYOS_KERNEL != 1 ]] && command -v mokutil >/dev/null && grep -qi 'SecureBoot enabled' < <(mokutil --sb-state 2>/dev/null); then
+    warn "kernel CachyOS: Secure Boot ligado; o README do COPR não cobre assinatura, então o kernel só inicia se a chave dele estiver no MOK. Pulando (CACHYOS_KERNEL=1 ou --kernel-cachyos ignora este aviso)"; return 0
+  fi
+  if [[ $CACHYOS_KERNEL == ask ]]; then
+    if ((DRY_RUN)); then log "perguntaria: \"Instalar o kernel do CachyOS ($var)?\" (simulando sim)"
+    elif ! ask_yn "Instalar o kernel do CachyOS ($var, COPR $copr)? O kernel do Fedora continua no menu do GRUB." n; then
+      log "kernel CachyOS: pulado"; return 0
+    fi
+  fi
+
+  # "dnf copr" vem de um plugin (dnf5-plugins no dnf5, dnf-plugins-core no dnf4).
+  if ! dnf copr --help >/dev/null 2>&1; then
+    plug=dnf-plugins-core
+    if command -v dnf5 >/dev/null; then plug=dnf5-plugins; fi
+    pm_install "$plug" || { warn "kernel CachyOS: não consegui instalar $plug; pulando"; FAILED+=("$plug"); return 0; }
+  fi
+  # Com SELinux ligado o kernel precisa poder carregar módulos (receita do README do COPR).
+  if command -v getenforce >/dev/null && [[ $(getenforce 2>/dev/null) != Disabled ]]; then
+    run $SUDO setsebool -P domain_kernel_load_modules on || warn "kernel CachyOS: setsebool falhou; rode: sudo setsebool -P domain_kernel_load_modules on"
+  fi
+  log "kernel CachyOS: habilitando o COPR $copr e instalando $var (e o $var-devel-matched)..."
+  if ! { run $SUDO dnf copr enable -y "$copr" && run $SUDO dnf install -y "$var" "$var-devel-matched"; }; then
+    warn "kernel CachyOS: a instalação falhou; o kernel do Fedora continua intacto"; FAILED+=("$var"); return 0
+  fi
+  if command -v lspci >/dev/null && grep -qi nvidia < <(lspci 2>/dev/null); then
+    warn "NVIDIA: o COPR não suporta mais módulos NVIDIA pré-compilados (anúncio de 23/02/2026); use o RPM Fusion (akmod-nvidia) ou o Negativo17 e confira com 'modinfo nvidia' no kernel novo antes de depender dele"
+  fi
+  log "kernel CachyOS: instalado; reinicie e confira com 'uname -r' (o kernel antigo continua no menu do GRUB)"
+}
+
 # ─── pacman em proot (Arch Linux ARM e afins) ─────────────────────────────────
 # No proot o kernel do Android não oferece Landlock/seccomp nem troca de usuário
 # real, então o sandbox de download do pacman 7+ falha, e o CheckSpace não
@@ -1349,7 +1416,9 @@ system_phase() {
   wsl_default_user || warn "WSL: não consegui definir $NEW_USER como usuário padrão em $WSL_CONF_FILE"
   run_user_phase
   # Por último: mexe no bootloader/initramfs e uma falha aqui não pode atrapalhar o setup principal.
-  minecraft_themes || warn "os temas Minecraft não foram concluídos"
+  # O kernel vem antes dos temas: o dracut do tema do Plymouth regenera o initramfs de todos os kernels.
+  setup_cachyos_kernel || warn "o kernel do CachyOS não foi concluído"
+  minecraft_themes|| warn "os temas Minecraft não foram concluídos"
 }
 
 # ─── Proot (qualquer distro): como root, sem sudo ─────────────────────────────
@@ -2235,7 +2304,7 @@ main() {
     else
       [[ -f $SCRIPT_PATH ]] || die "Salve o script em disco e rode: bash setup.sh"
       log "Reexecutando com $ELEVATE"
-      exec "$ELEVATE" env "REPO_URL=$REPO_URL" "NEW_USER=$NEW_USER" "MC_THEMES=$MC_THEMES" "SKIP_PACMAN_REPOS=$SKIP_PACMAN_REPOS" "CACHYOS_REPO=$CACHYOS_REPO" "CACHYOS_SEM_SNAPSHOT=$CACHYOS_SEM_SNAPSHOT" "PACMAN_MIRRORLIST_INCLUDE=$PACMAN_MIRRORLIST_INCLUDE" "FORCE_APK=$FORCE_APK" "SKIP_APK_REPOS=$SKIP_APK_REPOS" "FORCE_LIBC=${FORCE_LIBC:-}" "FORCE_INIT=${FORCE_INIT:-}" "WSL_DISTRO_NAME=${WSL_DISTRO_NAME:-}" bash "$SCRIPT_PATH" "$@"
+      exec "$ELEVATE" env "REPO_URL=$REPO_URL" "NEW_USER=$NEW_USER" "MC_THEMES=$MC_THEMES" "SKIP_PACMAN_REPOS=$SKIP_PACMAN_REPOS" "CACHYOS_REPO=$CACHYOS_REPO" "CACHYOS_SEM_SNAPSHOT=$CACHYOS_SEM_SNAPSHOT" "CACHYOS_KERNEL=$CACHYOS_KERNEL" "CACHYOS_KERNEL_VARIANT=$CACHYOS_KERNEL_VARIANT" "PACMAN_MIRRORLIST_INCLUDE=$PACMAN_MIRRORLIST_INCLUDE" "FORCE_APK=$FORCE_APK" "SKIP_APK_REPOS=$SKIP_APK_REPOS" "FORCE_LIBC=${FORCE_LIBC:-}" "FORCE_INIT=${FORCE_INIT:-}" "WSL_DISTRO_NAME=${WSL_DISTRO_NAME:-}" bash "$SCRIPT_PATH" "$@"
     fi
   fi
   if ((! DRY_RUN)); then
