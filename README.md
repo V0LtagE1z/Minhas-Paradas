@@ -16,7 +16,7 @@ Meus dotfiles de terminal em um script que monta tudo em uma máquina nova, seja
 | `Distro Proot/` | Dotfiles para distros rodando em proot (proot-distro) |
 | `Termux/` | Dotfiles do Termux e os scripts de backup e restauração (veja "Backup do Termux") |
 | `Kitty/` | Configuração do terminal Kitty e os temas claro/escuro (só distros de desktop) |
-| `Luna E Terra.png` | Papel de parede 1920x1080. O `setup.sh` não o aplica; o `config.lua` do OXWM o espera em `~/Pictures/Wallpapers/` |
+| `Luna E Terra.jpg` | Papel de parede 1920 x 1280. O `setup.sh` não o aplica; o `config.lua` do OXWM o espera em `~/Pictures/Wallpapers/` |
 
 Arquivos de cada pasta:
 
