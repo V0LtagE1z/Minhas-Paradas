@@ -685,8 +685,11 @@ termux_upgrade() {
   log "Termux: atualizando o sistema (pkg update + pkg upgrade) antes de tudo"
   run pkg update -y \
     || die "pkg update falhou. Se o mirror estiver fora do ar, rode termux-change-repo e execute o script de novo."
-  # DEBIAN_FRONTEND=noninteractive: sem isso o dpkg pode parar numa pergunta sobre arquivo de configuração.
+  # O pkg repassa os argumentos ao "apt full-upgrade". DEBIAN_FRONTEND=noninteractive só cobre o debconf: as
+  # perguntas do dpkg sobre arquivos de configuração (openssl.cnf, sources.list, bash.bashrc...) exigem
+  # --force-confdef/--force-confold, que mantêm os seus arquivos (e o sources.list com o mirror escolhido).
   run env DEBIAN_FRONTEND=noninteractive pkg upgrade -y \
+    -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
     || die "pkg upgrade falhou. Resolva (veja a mensagem acima) e execute o script de novo; ele pode ser repetido."
 }
 
