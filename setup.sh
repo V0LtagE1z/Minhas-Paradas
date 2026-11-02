@@ -642,7 +642,7 @@ termux_mirror() {
   local etc="${PREFIX:-/data/data/com.termux/files/usr}/etc/termux" dir f url t n=0
   dir="$etc/mirrors-setup"
   if [[ ! -d $etc/mirrors ]]; then
-    warn "Termux: sem $etc/mirrors (termux-tools antigo?); mantenho o mirror atual"
+    warn "Termux: esta instalação não tem a pasta $etc/mirrors; mantenho o mirror atual"
     return 0
   fi
   if ((DRY_RUN)); then

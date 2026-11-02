@@ -24,4 +24,10 @@ Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep 
 - `science-repo`, `game-repo` e `unstable-repo` ficam de fora: foram incorporados ao repositório principal do Termux.
 - O `tur-repo` não é oficial; o Termux não dá suporte aos pacotes dele.
 - A medição de mirrors olha latência (baixa só o arquivo `Release`), não banda.
-- Testado só com `--dry-run`, `pkg` e `curl` falsos e um `PREFIX` de mentira (mirrors vivos, mortos e lentos, nenhum mirror respondendo, `termux-tools` sem a pasta `mirrors`, `pkg update` falhando). **Não testado num Termux de verdade.**
+- Testes simulados: `--dry-run`, `pkg` e `curl` falsos e um `PREFIX` de mentira (mirrors vivos, mortos e lentos, nenhum mirror respondendo, sem a pasta `mirrors`, `pkg update` falhando).
+
+#### Teste num Termux real (2026-11-01, aarch64, mirror `termux.net`)
+
+- **Funcionou:** `pkg update` e `pkg upgrade` (nada a atualizar numa instalação nova), `x11-repo`, `root-repo` e `tur-repo` habilitados (cada um seguido do `pkg update`), `zsh`, `git`, `curl`, `fastfetch`, `micro`, `fzf`, `zoxide` e `termux-services` (com o `runit`), oh-my-zsh, powerlevel10k e plugins, dotfiles, `EDITOR`/`VISUAL` e a fonte MesloLGS NF. Nenhum pacote falhou.
+- **Não exercitado:** a escolha de mirror. Esta instalação **não tem a pasta `$PREFIX/etc/termux/mirrors`**, então o script avisou, manteve o mirror atual (`termux.net`) e seguiu: só o caminho de fallback foi validado de verdade. A medição e o ranking dos mirrors continuam testados apenas com mirrors falsos. A causa de a pasta não existir não foi investigada.
+- O `pkg update` extra depois de cada repositório é redundante nos repositórios que já se atualizam sozinhos na instalação (o `tur-repo` baixa a própria lista), mas é inofensivo.
