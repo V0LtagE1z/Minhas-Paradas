@@ -98,6 +98,8 @@ Variáveis de ambiente (valor padrão em negrito, quando existe):
 | `CACHYOS_REPO` (**auto**), `CACHYOS_REPO_URL`, `CACHYOS_SEM_SNAPSHOT=1` | Repositórios do CachyOS: `auto`, `1` ou `0`; o instalador; seguir sem snapshot |
 | `CACHYOS_KERNEL` (**ask**), `CACHYOS_KERNEL_VARIANT` (**kernel-cachyos**) | Kernel do CachyOS no Fedora: `ask`, `1` ou `0`; a variante (`kernel-cachyos`, `-lto`, `-lts`, `-lts-lto`, `-rt` ou `-server`) |
 | `MC_THEMES` (**ask**) | `1`, `0` ou `ask`, o mesmo que as opções dos temas |
+| `SKIP_TERMUX_MIRROR=1`, `TERMUX_MIRROR_COUNT` (**3**) | Termux: não mexer no mirror (mantém o do `termux-change-repo`); quantos dos mirrors mais rápidos ficam no conjunto |
+| `SKIP_TERMUX_UPGRADE=1`, `SKIP_TERMUX_REPOS=1` | Termux: não rodar o `pkg upgrade` completo (só atualiza o índice); não habilitar `x11-repo`, `root-repo` e `tur-repo` |
 | `SKIP_APK_REPOS=1`, `FORCE_APK=1`, `FORCE_LIBC`, `FORCE_INIT` | Alpine: não habilitar o `community`; aceitar `apk` em Wolfi/Chimera; trocar a detecção de libc e de init |
 
 Outras variáveis (`OS_RELEASE_FILE`, `PACMAN_CONF`, `ROOT_PREFIX`, `KERNEL_RELEASE`, `APK_REPOS_FILE`...) só servem para testar o script contra arquivos de exemplo.
@@ -178,6 +180,27 @@ Antes disso o `.zshrc` decide se está no Termux de verdade ou numa distro em pr
 O nome `gustavo` está fixo nesse `.zshrc` (no `su - gustavo`). Com `NEW_USER=outro` o usuário é criado, mas a troca automática não acontece até você ajustar essa linha.
 
 No Termux, rodar como root continua bloqueado de propósito.
+
+## Termux
+
+No Termux o script segue esta ordem, sem criar usuário:
+
+1. **Mirror mais rápido.** O `pkg` não escolhe o mais rápido: ele descarta os mirrors que não respondem e sorteia um entre os que sobraram, então você pode cair num mirror do outro lado do mundo. O script mede o tempo de resposta de cada mirror que vem com o Termux (`$PREFIX/etc/termux/mirrors`), copia os **3 mais rápidos** para `$PREFIX/etc/termux/mirrors-setup`, aponta `chosen_mirrors` para essa pasta (o mesmo mecanismo do `termux-change-repo`) e roda `pkg --check-mirror update`. Com 3 no conjunto, o `pkg` troca sozinho se um cair. Se nenhum responder, ou se a instalação não tiver a pasta `mirrors`, o mirror atual é mantido. **Isso acontece no Termux da Play Store** (build não oficial, com repositório `termux.net`): a etapa é pulada com um aviso e o resto roda normalmente. No Termux do F-Droid (1.118.3) a medição funcionou.
+2. **`pkg update` + `pkg upgrade -y`.** Instalar pacotes novos em cima de um Termux desatualizado mistura bibliotecas de versões diferentes. O `upgrade` roda com `--force-confdef --force-confold` (o dpkg mantém os seus arquivos de configuração em vez de perguntar, inclusive o `sources.list` com o mirror escolhido). Se falhar, o script para e manda rodar `termux-change-repo` (mirror fora do ar) e repetir.
+3. **Repositórios adicionais:** `x11-repo`, `root-repo` e `tur-repo`, seguidos de um novo `pkg update` para os pacotes deles aparecerem. Os já habilitados são pulados.
+4. Os pacotes de sempre (`zsh git curl fastfetch micro fzf zoxide`).
+5. **Pacotes extras do Termux:** `termux-services`. Depois de instalado, feche e abra o Termux de novo para o runit subir; aí use `sv-enable <serviço>`.
+6. O resto do setup (oh-my-zsh, powerlevel10k, plugins, dotfiles, fonte, `EDITOR`, shell padrão).
+
+Observações:
+
+- **`science-repo`, `game-repo` e `unstable-repo` não são habilitados** de propósito: segundo a wiki do `termux-packages` (página *Mirrors*), esses canais foram incorporados ao repositório principal e não precisam mais ser adicionados.
+- **O `tur-repo` não é oficial.** O Termux User Repository é mantido por outra organização e o time do Termux não dá suporte aos pacotes dele. Para tirá-lo, edite o array `TERMUX_REPOS` no `setup.sh`.
+- Para acrescentar outros repositórios ou pacotes, edite os arrays `TERMUX_REPOS` e `TERMUX_EXTRA_PACKAGES` no começo do `setup.sh`.
+- **Prefira o Termux do F-Droid ou do GitHub, não o da Play Store.** A Play Store tem uma build não oficial (fork), com repositório próprio (`termux.net`) e sem a pasta de mirrors. Nos testes do autor ela também mostrou `gitstatus failed to initialize` no powerlevel10k, o que não ocorreu no F-Droid (causa não confirmada; relato do autor, não reproduzido aqui).
+- **O mirror muda a velocidade, não a segurança:** os pacotes são assinados (`termux-keyring`) e o `apt` confere a assinatura. Também não é "mais confiável" que o mirror oficial: o ganho é ficar com os mais próximos de você.
+- **A medição olha latência, não banda:** ela baixa só o arquivo `Release` (pequeno) de cada mirror. Num mirror com boa latência e banda ruim o ranking pode errar; nesse caso use `TERMUX_MIRROR_COUNT=1` ou escolha à mão com `termux-change-repo` e rode com `SKIP_TERMUX_MIRROR=1`. No único teste real (F-Droid) o ganho de velocidade não ficou comprovado: os 3 mirrors escolhidos diferiam em 19 ms de latência e o download ficou na mesma faixa do mirror sorteado antes. O ranking também ignora o peso dos mirrors, então o CDN oficial pode ficar de fora do conjunto.
+- O `--dry-run` mostra todos esses comandos sem executar nada.
 
 ## WSL
 
