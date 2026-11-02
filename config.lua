@@ -20,7 +20,7 @@ local shift = "Shift"
 local claude_cmd = "claude-desktop"
 
 -- Wallpaper (aplicado no autostart com o feh)
-local wallpaper = "/home/gustavo/Pictures/Wallpapers/Luna E Terra.png"
+local wallpaper = "/home/gustavo/Pictures/Wallpapers/Luna E Terra.jpg"
 
 local scripts = "~/.config/oxwm/scripts/"
 local function sh(cmd)
