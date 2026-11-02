@@ -141,13 +141,17 @@ PACKAGES=(zsh git curl fastfetch micro fzf zoxide)
 # fontconfig garante o fc-cache/fc-list usados na instalação das fontes.
 DESKTOP_PACKAGES=(kitty fontconfig)
 
-# Termux: primeiro "pkg update" + "pkg upgrade" (antes de qualquer outra coisa), depois os
-# repositórios adicionais e por fim os pacotes extras.
+# Termux: primeiro o mirror mais rápido e "pkg update" + "pkg upgrade" (antes de qualquer outra coisa),
+# depois os repositórios adicionais e por fim os pacotes extras.
+#   SKIP_TERMUX_MIRROR=1   não mexe no mirror (o que você escolheu no termux-change-repo fica);
+#   TERMUX_MIRROR_COUNT=3  quantos dos mirrors mais rápidos ficam no conjunto (o pkg troca sozinho se um cair);
 #   SKIP_TERMUX_UPGRADE=1  pula o update/upgrade completo (só atualiza o índice, com "pkg update");
 #   SKIP_TERMUX_REPOS=1    não habilita os repositórios adicionais.
 # O science-repo, o game-repo e o unstable-repo foram incorporados ao repositório principal do Termux
 # (wiki do termux-packages, página Mirrors), então não são mais necessários.
 # O tur-repo (Termux User Repository) NÃO é oficial: o Termux não dá suporte aos pacotes dele.
+SKIP_TERMUX_MIRROR="${SKIP_TERMUX_MIRROR:-0}"
+TERMUX_MIRROR_COUNT="${TERMUX_MIRROR_COUNT:-3}"
 SKIP_TERMUX_UPGRADE="${SKIP_TERMUX_UPGRADE:-0}"
 SKIP_TERMUX_REPOS="${SKIP_TERMUX_REPOS:-0}"
 TERMUX_REPOS=(x11-repo root-repo tur-repo)
@@ -627,6 +631,50 @@ install_packages() {
 # ─── Termux: upgrade, repositórios e pacotes extras ───────────────────────────
 # Roda antes de qualquer instalação: o Termux fica quebrado se você instala pacotes novos
 # em cima de um sistema desatualizado (bibliotecas e binários de versões diferentes).
+# O pkg NÃO escolhe o mirror mais rápido: ele só descarta os que não respondem e sorteia um (com peso),
+# então dá para cair num mirror do outro lado do mundo. Aqui cada mirror que vem com o termux-tools
+# (etc/termux/mirrors) é medido e os mais rápidos viram o conjunto em chosen_mirrors, o mesmo mecanismo
+# do termux-change-repo. Os pacotes são assinados (termux-keyring): o mirror muda a velocidade, não a segurança.
+# shortcut: mede só a latência + o arquivo Release (pequeno), não a banda; troque por download maior se precisar.
+termux_mirror() {
+  [[ $PM == pkg ]] || return 0
+  if [[ $SKIP_TERMUX_MIRROR == 1 ]]; then log "Termux: escolha de mirror pulada (SKIP_TERMUX_MIRROR=1)"; return 0; fi
+  local etc="${PREFIX:-/data/data/com.termux/files/usr}/etc/termux" dir f url t n=0
+  dir="$etc/mirrors-setup"
+  if [[ ! -d $etc/mirrors ]]; then
+    warn "Termux: sem $etc/mirrors (termux-tools antigo?); mantenho o mirror atual"
+    return 0
+  fi
+  if ((DRY_RUN)); then
+    log "mediria cada mirror de $etc/mirrors e deixaria os $TERMUX_MIRROR_COUNT mais rápidos em $dir (chosen_mirrors aponta para lá)"
+    run pkg --check-mirror update -y
+    return 0
+  fi
+  log "Termux: medindo os mirrors (alguns segundos)..."
+  local -a ranked=()
+  while IFS= read -r f; do
+    case $f in *.dpkg-old|*.dpkg-new|*~) continue ;; esac
+    # O pkg também faz "source" desses arquivos (MAIN=, ROOT=, X11=, WEIGHT=); mesmo formato.
+    url=$( . "$f" >/dev/null 2>&1; printf '%s' "${MAIN:-}" ) || url=""
+    [[ $url == http*://* ]] || continue
+    t=$(curl -fsS -o /dev/null -m 8 -w '%{time_total}' "$url/dists/stable/Release" 2>/dev/null) || continue
+    ranked+=("$t $f")
+  done < <(find -L "$etc/mirrors" -type f)
+  if ((${#ranked[@]} == 0)); then
+    warn "Termux: nenhum mirror respondeu na medição; mantenho o mirror atual"
+    return 0
+  fi
+  rm -rf "$dir"; mkdir -p "$dir"
+  while read -r t f; do
+    ((n++ < TERMUX_MIRROR_COUNT)) || break
+    cp "$f" "$dir/"
+    log "mirror: $(basename "$f") (${t}s)"
+  done < <(printf '%s\n' "${ranked[@]}" | sort -n)
+  ln -sfn "$dir" "$etc/chosen_mirrors"
+  # --check-mirror: sem ele o pkg mantém o mirror atual enquanto ele responder (cache de 6 h) e ignora a troca.
+  run pkg --check-mirror update -y || warn "pkg --check-mirror update falhou; o próximo passo (pkg update) vai mostrar o erro"
+}
+
 termux_upgrade() {
   [[ $PM == pkg ]] || return 0
   if [[ $SKIP_TERMUX_UPGRADE == 1 ]]; then
@@ -2342,7 +2390,8 @@ main() {
   # Termux: usuário único, sem criar conta.
   if [[ $PM == pkg ]]; then
     [[ $EUID -ne 0 ]] || die "Rode como usuário normal no Termux; root não é aceito."
-    termux_upgrade           # antes de tudo: pkg update + pkg upgrade
+    termux_mirror            # antes de tudo: mirror mais rápido, para o upgrade já baixar dele
+    termux_upgrade           # pkg update + pkg upgrade
     termux_repos             # x11-repo, root-repo, tur-repo
     install_packages
     termux_extra_packages    # termux-services
