@@ -98,6 +98,7 @@ Variáveis de ambiente (valor padrão em negrito, quando existe):
 | `CACHYOS_REPO` (**auto**), `CACHYOS_REPO_URL`, `CACHYOS_SEM_SNAPSHOT=1` | Repositórios do CachyOS: `auto`, `1` ou `0`; o instalador; seguir sem snapshot |
 | `CACHYOS_KERNEL` (**ask**), `CACHYOS_KERNEL_VARIANT` (**kernel-cachyos**) | Kernel do CachyOS no Fedora: `ask`, `1` ou `0`; a variante (`kernel-cachyos`, `-lto`, `-lts`, `-lts-lto`, `-rt` ou `-server`) |
 | `MC_THEMES` (**ask**) | `1`, `0` ou `ask`, o mesmo que as opções dos temas |
+| `SKIP_TERMUX_UPGRADE=1`, `SKIP_TERMUX_REPOS=1` | Termux: não rodar o `pkg upgrade` completo (só atualiza o índice); não habilitar `x11-repo`, `root-repo` e `tur-repo` |
 | `SKIP_APK_REPOS=1`, `FORCE_APK=1`, `FORCE_LIBC`, `FORCE_INIT` | Alpine: não habilitar o `community`; aceitar `apk` em Wolfi/Chimera; trocar a detecção de libc e de init |
 
 Outras variáveis (`OS_RELEASE_FILE`, `PACMAN_CONF`, `ROOT_PREFIX`, `KERNEL_RELEASE`, `APK_REPOS_FILE`...) só servem para testar o script contra arquivos de exemplo.
@@ -178,6 +179,23 @@ Antes disso o `.zshrc` decide se está no Termux de verdade ou numa distro em pr
 O nome `gustavo` está fixo nesse `.zshrc` (no `su - gustavo`). Com `NEW_USER=outro` o usuário é criado, mas a troca automática não acontece até você ajustar essa linha.
 
 No Termux, rodar como root continua bloqueado de propósito.
+
+## Termux
+
+No Termux o script segue esta ordem, sem criar usuário:
+
+1. **`pkg update` + `pkg upgrade -y`, antes de qualquer outra coisa.** Instalar pacotes novos em cima de um Termux desatualizado mistura bibliotecas de versões diferentes. O `upgrade` roda com `DEBIAN_FRONTEND=noninteractive` (sem perguntas do dpkg sobre arquivos de configuração). Se falhar, o script para e manda rodar `termux-change-repo` (mirror fora do ar) e repetir.
+2. **Repositórios adicionais:** `x11-repo`, `root-repo` e `tur-repo`, seguidos de um novo `pkg update` para os pacotes deles aparecerem. Os já habilitados são pulados.
+3. Os pacotes de sempre (`zsh git curl fastfetch micro fzf zoxide`).
+4. **Pacotes extras do Termux:** `termux-services`. Depois de instalado, feche e abra o Termux de novo para o runit subir; aí use `sv-enable <serviço>`.
+5. O resto do setup (oh-my-zsh, powerlevel10k, plugins, dotfiles, fonte, `EDITOR`, shell padrão).
+
+Observações:
+
+- **`science-repo`, `game-repo` e `unstable-repo` não são habilitados** de propósito: segundo a wiki do `termux-packages` (página *Mirrors*), esses canais foram incorporados ao repositório principal e não precisam mais ser adicionados.
+- **O `tur-repo` não é oficial.** O Termux Users Repository é mantido por outra organização e o time do Termux não dá suporte aos pacotes dele. Para tirá-lo, edite o array `TERMUX_REPOS` no `setup.sh`.
+- Para acrescentar outros repositórios ou pacotes, edite os arrays `TERMUX_REPOS` e `TERMUX_EXTRA_PACKAGES` no começo do `setup.sh`.
+- O `--dry-run` mostra todos esses comandos sem executar nada.
 
 ## WSL
 
