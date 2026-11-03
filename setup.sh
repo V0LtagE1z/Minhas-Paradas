@@ -3,7 +3,7 @@
 # Suporta: Termux (pkg), Debian/Ubuntu (apt), Fedora (dnf), openSUSE (zypper), Arch/CachyOS (pacman + paru),
 # Alpine e postmarketOS (apk; musl, geralmente com OpenRC)
 # e essas mesmas distros rodando dentro de proot (proot-distro): lá o script roda como root,
-# sem sudo, paru, Kitty nem fontes (a fonte é a do próprio Termux).
+# sem paru, Kitty nem fontes (a fonte é a do próprio Termux); o sudo é instalado, mas só funciona se o proot honrar o setuid.
 #
 # Alpine/postmarketOS (apk): o gerenciador de pacotes, o init e a libc são coisas independentes. O script
 # detecta cada uma (PM=apk, INIT_SYSTEM=openrc|systemd|dinit|none, LIBC=musl|glibc) e só aceita apk com musl
@@ -27,8 +27,8 @@
 #   4. executa o setup tradicional (paru, oh-my-zsh, p10k, dotfiles, Kitty, fontes) COMO esse usuário.
 # Distros em proot: rode como root. O script
 #   1. ajusta o pacman (só se a distro usar pacman) e instala os pacotes do sistema;
-#   2. cria o usuário "gustavo" (home /home/gustavo, shell zsh, grupos audio/video) SEM sudo
-#      (o setuid não funciona no proot; a administração fica com o root) e troca o shell do root para zsh;
+#   2. cria o usuário "gustavo" (home /home/gustavo, shell zsh, grupos wheel/audio/video), instala o sudo
+#      para ele (o setuid pode não funcionar no proot: o script testa no fim e avisa) e troca o shell do root para zsh;
 #   3. aplica os dotfiles de "Distro Proot" no root e executa o setup COMO esse usuário (via su).
 # Termux: não cria usuário; roda o setup tradicional direto, como usuário normal. Antes de tudo faz
 #   "pkg update" + "pkg upgrade", habilita x11-repo, root-repo e tur-repo e instala o termux-services.
@@ -89,7 +89,7 @@ REPO_DIR="${REPO_DIR:-$HOME/Minhas-Paradas}"
 # Se um dia quiser usar outro nome, troque o "su - gustavo" nesse .zshrc.
 NEW_USER="${NEW_USER:-gustavo}"
 NEW_HOME="/home/$NEW_USER"
-NEW_GROUPS=(wheel audio video)   # no proot vira (audio video): sem sudo, o wheel não serve para nada
+NEW_GROUPS=(wheel audio video)
 
 # Arch puro (desktop): ranqueia os mirrors com o rate-mirrors antes de instalar qualquer coisa.
 # SKIP_MIRRORS=1 pula essa etapa; FORCE_MIRRORS=1 ranqueia de novo mesmo se já foi feito.
@@ -470,7 +470,7 @@ detect_pm() {
   else die "Gerenciador de pacotes não suportado."
   fi
 
-  # Root não precisa de sudo; no proot o sudo não é usado (setuid não funciona lá).
+  # Root não precisa de sudo; no proot o próprio script também não o usa (o sudo é só para o NEW_USER).
   if [[ $EUID -eq 0 ]] || ((PROOT)); then SUDO=""; fi
   if [[ -n $SUDO ]] && ! command -v sudo >/dev/null; then
     if [[ $PM == apk ]] && command -v doas >/dev/null; then
@@ -1576,9 +1576,9 @@ system_phase() {
   minecraft_themes|| warn "os temas Minecraft não foram concluídos"
 }
 
-# ─── Proot (qualquer distro): como root, sem sudo ─────────────────────────────
-# O setuid não funciona no proot, então o NEW_USER não recebe sudo (a administração
-# fica com o root) e o setup dele roda com "su", que o root pode usar sem senha.
+# ─── Proot (qualquer distro): como root; o setup do NEW_USER roda com "su" ─────
+# O root usa "su" sem senha. O NEW_USER recebe o sudo, mas o proot pode não honrar o setuid:
+# check_proot_sudo testa de verdade e avisa.
 run_user_phase_proot() {
   if ((DRY_RUN)); then
     log "Fase do usuário $NEW_USER (simulada, home $NEW_HOME, via su):"
@@ -1723,6 +1723,19 @@ report_zshrc_termux() {
   fi
 }
 
+# O setuid pode não funcionar no proot (o sudo instala mas não executa); testa como o NEW_USER e avisa.
+# "-n": sem senha, para não travar; "a password is required" já prova que o sudo executou como root.
+check_proot_sudo() {
+  if ((DRY_RUN)); then log "testaria se o sudo executa para $NEW_USER (su -c 'sudo -n true')"; return 0; fi
+  local out
+  if out=$(su -l -s /bin/bash "$NEW_USER" -c 'LC_ALL=C sudo -n true' 2>&1) || [[ $out == *"a password is required"* ]]; then
+    log "sudo funciona para $NEW_USER"
+  else
+    warn "o sudo NÃO executa para $NEW_USER neste proot (${out//$'\n'/ }). O proot não honra o setuid: para comandos de root abra uma sessão como root (proot-distro login <distro>, sem --user)."
+  fi
+  return 0
+}
+
 proot_phase() {
   if ((DRY_RUN)); then report_zshrc_termux; report_zshrc_family; fi
   prepare_proot_pacman
@@ -1730,9 +1743,12 @@ proot_phase() {
   pm_update
   install_packages
   gen_locales
+  ensure_sudo
   create_user
   set_root_shell
+  configure_sudo
   set_password
+  check_proot_sudo
   # Root: dotfiles de "Distro Proot" (o .zshrc dele repassa a sessão para o NEW_USER).
   run_user_steps
   run_user_phase_proot
@@ -2412,9 +2428,6 @@ main() {
   fi
 
   if ((REVERT_MC)) && ! is_desktop; then die "--reverter-temas só vale para distros de desktop (os temas não são instalados no Termux nem no proot)."; fi
-
-  # No proot o NEW_USER não tem sudo, então o grupo wheel não serve para nada.
-  if ((PROOT)); then NEW_GROUPS=(audio video); fi
 
   # Fase 2 (interna): chamada pelo próprio script, já como o novo usuário (desktop ou proot).
   if ((USER_PHASE)); then
