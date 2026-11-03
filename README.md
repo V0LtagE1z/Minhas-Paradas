@@ -48,7 +48,7 @@ Como rodar depende do ambiente:
 | Termux | Como usuário normal | Aplica o setup direto no seu usuário |
 | Alpine / postmarketOS (`apk`) | `sh setup.sh`, como root ou com `doas`/`sudo` (o bash é instalado sozinho) | Igual às distros de desktop, com as diferenças da seção "Alpine e postmarketOS" |
 | WSL | Como root ou com `sudo`, dentro da distro (o script detecta o ambiente) | Igual às distros de desktop, sem bootloader, temas, Kitty e fonte, e com login automático no `gustavo` (veja a seção do WSL) |
-| Distro em proot (qualquer uma) | Como root (o script detecta o ambiente) | Cria o usuário `gustavo` sem sudo e aplica o setup nele e no root (veja abaixo) |
+| Distro em proot (qualquer uma) | Como root (o script detecta o ambiente) | Cria o usuário `gustavo` com `sudo` (se o proot permitir; o script testa) e aplica o setup nele e no root (veja abaixo) |
 
 O script precisa estar salvo em arquivo (`git clone` e `bash setup.sh`). Rodar via `curl ... | bash` não funciona nas distros, porque a segunda fase reexecuta o próprio arquivo.
 
@@ -100,6 +100,7 @@ Variáveis de ambiente (valor padrão em negrito, quando existe):
 | `MC_THEMES` (**ask**) | `1`, `0` ou `ask`, o mesmo que as opções dos temas |
 | `SKIP_TERMUX_MIRROR=1`, `TERMUX_MIRROR_COUNT` (**3**) | Termux: não mexer no mirror (mantém o do `termux-change-repo`); quantos dos mirrors mais rápidos ficam no conjunto |
 | `SKIP_TERMUX_UPGRADE=1`, `SKIP_TERMUX_REPOS=1` | Termux: não rodar o `pkg upgrade` completo (só atualiza o índice); não habilitar `x11-repo`, `root-repo` e `tur-repo` |
+| `SKIP_TERMUX_PROOT=1`, `TERMUX_PROOT_IMAGE` (**danhunsaker/archlinuxarm:latest**), `TERMUX_PROOT_NAME` (**archlinuxarm**) | Termux: não instalar o Arch Linux ARM no `proot-distro` (o pacote `proot-distro` continua sendo instalado); imagem que o `proot-distro install` baixa; nome local do container (o de `proot-distro login`) |
 | `SKIP_APK_REPOS=1`, `FORCE_APK=1`, `FORCE_LIBC`, `FORCE_INIT` | Alpine: não habilitar o `community`; aceitar `apk` em Wolfi/Chimera; trocar a detecção de libc e de init |
 
 Outras variáveis (`OS_RELEASE_FILE`, `PACMAN_CONF`, `ROOT_PREFIX`, `KERNEL_RELEASE`, `APK_REPOS_FILE`...) só servem para testar o script contra arquivos de exemplo.
@@ -144,7 +145,7 @@ O que muda no Alpine, em relação às outras distros de desktop:
 - **Temas Minecraft pulados.** O Alpine usa `mkinitfs`, sem os ganchos de `mkinitcpio`, `initramfs-tools` ou `dracut` que o tema do Plymouth usa; `--temas-minecraft` é ignorado com um aviso.
 - **Não se aplicam:** mirrors do Arch, `pacman.conf`, repositórios do CachyOS, `paru` e snapshot (são do `pacman`).
 - **Serviços.** O `setup.sh` não liga nem desliga serviços, então não há `rc-update`/`rc-service` para tratar.
-- **Proot.** O `proot-distro` do Alpine cai no modo proot (sem init, sem `sudo`); o `.zshrc` do root já reconhecia o Alpine e atualiza o sistema com `apk update` e `apk upgrade`.
+- **Proot.** O `proot-distro` do Alpine cai no modo proot (sem init); o `.zshrc` do root já reconhecia o Alpine e atualiza o sistema com `apk update` e `apk upgrade`.
 - **`nvidia.sh`.** O driver proprietário da NVIDIA é só glibc, então o `nvidia.sh` recusa o Alpine e o postmarketOS (saída 12); no musl só o nouveau funciona.
 
 No `--dry-run`, com o `apk` instalado, o script roda `apk add --simulate` em cada pacote e avisa os que não resolvem no índice local. É só informativo: a simulação não habilita o community e talvez não rode sem root.
@@ -166,8 +167,8 @@ Se a detecção falhar, force com `FORCE_PROOT=1 bash setup.sh`. Rode como root 
 
 1. Se a distro usa `pacman` (Arch Linux ARM e afins): ajusta o `/etc/pacman.conf` (com backup em `pacman.conf.bak`), comentando `CheckSpace` e `DownloadUser` e ativando a opção de desligar o sandbox do pacman (`DisableSandbox` no pacman 7.0; `DisableSandboxFilesystem` e `DisableSandboxSyscalls` no 7.1+). Inicializa o chaveiro (`archlinuxarm` no ALARM, `archlinux` nas demais), roda `pacman -Syu` uma vez e reaplica o ajuste, porque o pacman novo pode trazer outras opções.
 2. Instala `zsh git curl fastfetch micro fzf zoxide` (sem `sudo`, já que está como root) e gera os locales `pt_BR.UTF-8` e `en_US.UTF-8`, usados pelo `.zshrc`, se a distro tiver `locale-gen`.
-3. Cria o usuário `gustavo` (home `/home/gustavo`, shell zsh, grupos `audio` e `video`) e troca o shell do root para zsh. Você escolhe a senha com `passwd gustavo`; se ela já estiver definida, é mantida.
-4. **Não** dá sudo ao `gustavo`: o setuid não funciona no proot, então o `sudo` de usuário comum costuma falhar lá. A administração fica com o root.
+3. Cria o usuário `gustavo` (home `/home/gustavo`, shell zsh, grupos `wheel`, `audio` e `video`) e troca o shell do root para zsh. Você escolhe a senha com `passwd gustavo`; se ela já estiver definida, é mantida.
+4. **Instala o `sudo`** (se faltar) e libera o `gustavo` por `/etc/sudoers.d/10-gustavo`, validado com `visudo`, como nas distros de desktop (a senha continua sendo exigida). **Isso só funciona se o proot honrar o setuid**, e em muitos proots isso não acontece (o `sudo` instala, mas falha com `effective uid is not 0`). Por isso, no fim da fase o script **testa** o `sudo` como o `gustavo` (`sudo -n true`) e avisa se ele não executa. Nesse caso, para comandos de root abra uma sessão como root (`proot-distro login <distro>`, sem `--user`). Só o setup do `gustavo` não usa `sudo`: ele continua rodando sem ele, como antes.
 5. Aplica os dotfiles de `Distro Proot/` no root e, via `su -l gustavo`, no `gustavo` (oh-my-zsh, powerlevel10k, plugins, `EDITOR`).
 6. **Não** instala `paru`, Kitty, `fontconfig` nem fontes. A fonte é a do próprio Termux.
 
@@ -189,8 +190,9 @@ No Termux o script segue esta ordem, sem criar usuário:
 2. **`pkg update` + `pkg upgrade -y`.** Instalar pacotes novos em cima de um Termux desatualizado mistura bibliotecas de versões diferentes. O `upgrade` roda com `--force-confdef --force-confold` (o dpkg mantém os seus arquivos de configuração em vez de perguntar, inclusive o `sources.list` com o mirror escolhido). Se falhar, o script para e manda rodar `termux-change-repo` (mirror fora do ar) e repetir.
 3. **Repositórios adicionais:** `x11-repo`, `root-repo` e `tur-repo`, seguidos de um novo `pkg update` para os pacotes deles aparecerem. Os já habilitados são pulados.
 4. Os pacotes de sempre (`zsh git curl fastfetch micro fzf zoxide`).
-5. **Pacotes extras do Termux:** `termux-services`. Depois de instalado, feche e abra o Termux de novo para o runit subir; aí use `sv-enable <serviço>`.
-6. O resto do setup (oh-my-zsh, powerlevel10k, plugins, dotfiles, fonte, `EDITOR`, shell padrão).
+5. **Pacotes extras do Termux:** `termux-services` e `proot-distro`. Depois de instalado o `termux-services`, feche e abra o Termux de novo para o runit subir; aí use `sv-enable <serviço>`.
+6. **Arch Linux ARM no proot-distro.** O script roda `proot-distro install --name archlinuxarm danhunsaker/archlinuxarm:latest` (imagem de container do danhunsaker; o `proot-distro` atual aceita referências `usuário/imagem:tag`). Se o nome `archlinuxarm` já aparece em `proot-distro list`, pula. Se o download falhar, o script avisa, lista a falha no resumo final e segue. Para entrar: `proot-distro login archlinuxarm`; lá dentro, rode o mesmo `setup.sh` como root (modo proot, cria o usuário e aplica os dotfiles de `Distro Proot`). O script **não** roda esse segundo passo sozinho.
+7. O resto do setup (oh-my-zsh, powerlevel10k, plugins, dotfiles, fonte, `EDITOR`, shell padrão).
 
 Observações:
 
@@ -200,6 +202,7 @@ Observações:
 - **Prefira o Termux do F-Droid ou do GitHub, não o da Play Store.** A Play Store tem uma build não oficial (fork), com repositório próprio (`termux.net`) e sem a pasta de mirrors. Nos testes do autor ela também mostrou `gitstatus failed to initialize` no powerlevel10k, o que não ocorreu no F-Droid (causa não confirmada; relato do autor, não reproduzido aqui).
 - **O mirror muda a velocidade, não a segurança:** os pacotes são assinados (`termux-keyring`) e o `apt` confere a assinatura. Também não é "mais confiável" que o mirror oficial: o ganho é ficar com os mais próximos de você.
 - **A medição olha latência, não banda:** ela baixa só o arquivo `Release` (pequeno) de cada mirror. Num mirror com boa latência e banda ruim o ranking pode errar; nesse caso use `TERMUX_MIRROR_COUNT=1` ou escolha à mão com `termux-change-repo` e rode com `SKIP_TERMUX_MIRROR=1`. No único teste real (F-Droid) o ganho de velocidade não ficou comprovado: os 3 mirrors escolhidos diferiam em 19 ms de latência e o download ficou na mesma faixa do mirror sorteado antes. O ranking também ignora o peso dos mirrors, então o CDN oficial pode ficar de fora do conjunto.
+- **A imagem do Arch Linux ARM é de terceiros** (`danhunsaker/archlinuxarm`), não oficial do Arch Linux ARM nem do Termux, e é baixada na hora: tem tamanho considerável (use Wi-Fi) e o `proot-distro` pede a arquitetura do aparelho (o script não passa `--architecture`), então a imagem precisa ter build para ela; não verifiquei quais arquiteturas a imagem publica. O `--name` exige um `proot-distro` recente (nas versões antigas o nome saía de um alias interno); se o `pkg` do seu Termux trouxer uma versão antiga, atualize o pacote antes.
 - O `--dry-run` mostra todos esses comandos sem executar nada.
 
 ## WSL
@@ -381,7 +384,7 @@ Dois scripts em `Termux/`, escritos em zsh e que precisam de `zstd` e `pv` (`pkg
 - O modo proot foi escrito para qualquer distro com `apt`, `dnf`, `zypper`, `pacman` ou `apk`, mas só foi validado com `--dry-run`. Teste de verdade em cada distro antes de confiar (o `su -l gustavo` e o `useradd` dependem de como o proot emula usuários).
 - Nas distros de desktop o setup é sempre aplicado ao usuário `gustavo`, e não ao usuário que rodou o script. Para rodar de novo depois, basta executar o script outra vez (por root ou por qualquer usuário com `sudo`, inclusive o próprio `gustavo`). No proot, rode de novo como root.
 - Termux não cria usuário.
-- O sudo do `gustavo` exige senha. A exceção é a instalação do `paru` no Arch/CachyOS, descrita acima. No proot o `gustavo` não tem sudo.
+- O sudo do `gustavo` exige senha. A exceção é a instalação do `paru` no Arch/CachyOS, descrita acima. No proot o `gustavo` recebe o mesmo sudoers, mas o `sudo` só executa se o proot honrar o setuid (o script testa e avisa).
 - No proot, a detecção por ptrace só vale para o Arch Linux ARM; nas outras distros ela depende do nome do kernel trazer `proot` (ou de `FORCE_PROOT=1`).
 - O `.zshrc` do proot tem `gustavo` fixo no `su - gustavo`; veja a seção do proot.
 - O `fastfetch` não existe nos repositórios do Debian 12 e do Ubuntu 22.04. Nessas versões ele aparece como falha e o `fastfetch` na primeira linha do `.zshrc` mostra "command not found" a cada terminal novo.
