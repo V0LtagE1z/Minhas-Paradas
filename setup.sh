@@ -146,7 +146,10 @@ DESKTOP_PACKAGES=(kitty fontconfig)
 #   SKIP_TERMUX_MIRROR=1   não mexe no mirror (o que você escolheu no termux-change-repo fica);
 #   TERMUX_MIRROR_COUNT=3  quantos dos mirrors mais rápidos ficam no conjunto (o pkg troca sozinho se um cair);
 #   SKIP_TERMUX_UPGRADE=1  pula o update/upgrade completo (só atualiza o índice, com "pkg update");
-#   SKIP_TERMUX_REPOS=1    não habilita os repositórios adicionais.
+#   SKIP_TERMUX_REPOS=1    não habilita os repositórios adicionais;
+#   SKIP_TERMUX_PROOT=1    não instala a distro do proot-distro (o pacote proot-distro continua sendo instalado);
+#   TERMUX_PROOT_IMAGE     imagem OCI que o proot-distro instala (padrão: danhunsaker/archlinuxarm:latest);
+#   TERMUX_PROOT_NAME      nome do container local, o que você usa em "proot-distro login" (padrão: archlinuxarm).
 # O science-repo, o game-repo e o unstable-repo foram incorporados ao repositório principal do Termux
 # (wiki do termux-packages, página Mirrors), então não são mais necessários.
 # O tur-repo (Termux User Repository) NÃO é oficial: o Termux não dá suporte aos pacotes dele.
@@ -155,7 +158,10 @@ TERMUX_MIRROR_COUNT="${TERMUX_MIRROR_COUNT:-3}"
 SKIP_TERMUX_UPGRADE="${SKIP_TERMUX_UPGRADE:-0}"
 SKIP_TERMUX_REPOS="${SKIP_TERMUX_REPOS:-0}"
 TERMUX_REPOS=(x11-repo root-repo tur-repo)
-TERMUX_EXTRA_PACKAGES=(termux-services)
+TERMUX_EXTRA_PACKAGES=(termux-services proot-distro)
+SKIP_TERMUX_PROOT="${SKIP_TERMUX_PROOT:-0}"
+TERMUX_PROOT_IMAGE="${TERMUX_PROOT_IMAGE:-danhunsaker/archlinuxarm:latest}"
+TERMUX_PROOT_NAME="${TERMUX_PROOT_NAME:-archlinuxarm}"
 
 # Estrutura do repo: cada ambiente tem a sua subpasta com os próprios dotfiles.
 DIR_TERMUX="Termux"
@@ -305,6 +311,9 @@ No fim o script pergunta se você quer encerrar a sessão (fecha o shell que cha
 
 Variáveis úteis: NEW_USER (padrão: gustavo), REPO_URL, REPO_DIR,
                  FORCE_PROOT=1 (força o modo proot se a detecção falhar),
+                 SKIP_TERMUX_PROOT=1 (Termux: não instala o Arch Linux ARM no proot-distro),
+                 TERMUX_PROOT_IMAGE (Termux: imagem do proot-distro; padrão danhunsaker/archlinuxarm:latest),
+                 TERMUX_PROOT_NAME (Termux: nome do container; padrão archlinuxarm),
                  SKIP_LOCALES=1 (não gera os locales nem escreve o locale.conf; desktop e WSL),
                  FORCE_WSL=1 (força o modo WSL) ou FORCE_WSL=0 (desliga a detecção de WSL),
                  WSL_SET_DEFAULT_USER=0 (no WSL, não define $NEW_USER como usuário padrão no wsl.conf),
@@ -729,6 +738,31 @@ termux_extra_packages() {
   done
   [[ " ${TERMUX_EXTRA_PACKAGES[*]} " == *" termux-services "* ]] \
     && log "termux-services: feche e abra o Termux de novo para o runit subir; depois use sv-enable <serviço>"
+  return 0
+}
+
+# Instala a imagem do Arch Linux ARM no proot-distro (o proot-distro vem em TERMUX_EXTRA_PACKAGES).
+# O proot-distro atual aceita uma referência de imagem OCI (usuário/imagem:tag) e --name para o nome local.
+# shortcut: "já instalado" = o nome aparece em "proot-distro list"; mude se o formato da listagem mudar.
+termux_proot_distro() {
+  [[ $PM == pkg ]] || return 0
+  if [[ $SKIP_TERMUX_PROOT == 1 ]]; then log "Termux: distro do proot-distro pulada (SKIP_TERMUX_PROOT=1)"; return 0; fi
+  if ((! DRY_RUN)); then
+    if ! command -v proot-distro >/dev/null 2>&1; then
+      warn "proot-distro não está instalado; pulo a instalação de $TERMUX_PROOT_IMAGE"
+      return 0
+    fi
+    if proot-distro list 2>/dev/null | grep -qw -- "$TERMUX_PROOT_NAME"; then
+      log "proot-distro: $TERMUX_PROOT_NAME já instalado"
+      return 0
+    fi
+  fi
+  if run proot-distro install --name "$TERMUX_PROOT_NAME" "$TERMUX_PROOT_IMAGE"; then
+    log "proot-distro: $TERMUX_PROOT_IMAGE instalado como $TERMUX_PROOT_NAME; entre com: proot-distro login $TERMUX_PROOT_NAME"
+  else
+    warn "falhou: proot-distro install $TERMUX_PROOT_IMAGE (a imagem é baixada da internet; tente de novo)"
+    FAILED+=("proot-distro:$TERMUX_PROOT_IMAGE")
+  fi
   return 0
 }
 
@@ -2397,7 +2431,8 @@ main() {
     termux_upgrade           # pkg update + pkg upgrade
     termux_repos             # x11-repo, root-repo, tur-repo
     install_packages
-    termux_extra_packages    # termux-services
+    termux_extra_packages    # termux-services, proot-distro
+    termux_proot_distro      # Arch Linux ARM (danhunsaker) no proot-distro
     run_user_steps
     echo
     print_failed

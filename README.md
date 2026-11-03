@@ -100,6 +100,7 @@ Variáveis de ambiente (valor padrão em negrito, quando existe):
 | `MC_THEMES` (**ask**) | `1`, `0` ou `ask`, o mesmo que as opções dos temas |
 | `SKIP_TERMUX_MIRROR=1`, `TERMUX_MIRROR_COUNT` (**3**) | Termux: não mexer no mirror (mantém o do `termux-change-repo`); quantos dos mirrors mais rápidos ficam no conjunto |
 | `SKIP_TERMUX_UPGRADE=1`, `SKIP_TERMUX_REPOS=1` | Termux: não rodar o `pkg upgrade` completo (só atualiza o índice); não habilitar `x11-repo`, `root-repo` e `tur-repo` |
+| `SKIP_TERMUX_PROOT=1`, `TERMUX_PROOT_IMAGE` (**danhunsaker/archlinuxarm:latest**), `TERMUX_PROOT_NAME` (**archlinuxarm**) | Termux: não instalar o Arch Linux ARM no `proot-distro` (o pacote `proot-distro` continua sendo instalado); imagem que o `proot-distro install` baixa; nome local do container (o de `proot-distro login`) |
 | `SKIP_APK_REPOS=1`, `FORCE_APK=1`, `FORCE_LIBC`, `FORCE_INIT` | Alpine: não habilitar o `community`; aceitar `apk` em Wolfi/Chimera; trocar a detecção de libc e de init |
 
 Outras variáveis (`OS_RELEASE_FILE`, `PACMAN_CONF`, `ROOT_PREFIX`, `KERNEL_RELEASE`, `APK_REPOS_FILE`...) só servem para testar o script contra arquivos de exemplo.
@@ -189,8 +190,9 @@ No Termux o script segue esta ordem, sem criar usuário:
 2. **`pkg update` + `pkg upgrade -y`.** Instalar pacotes novos em cima de um Termux desatualizado mistura bibliotecas de versões diferentes. O `upgrade` roda com `--force-confdef --force-confold` (o dpkg mantém os seus arquivos de configuração em vez de perguntar, inclusive o `sources.list` com o mirror escolhido). Se falhar, o script para e manda rodar `termux-change-repo` (mirror fora do ar) e repetir.
 3. **Repositórios adicionais:** `x11-repo`, `root-repo` e `tur-repo`, seguidos de um novo `pkg update` para os pacotes deles aparecerem. Os já habilitados são pulados.
 4. Os pacotes de sempre (`zsh git curl fastfetch micro fzf zoxide`).
-5. **Pacotes extras do Termux:** `termux-services`. Depois de instalado, feche e abra o Termux de novo para o runit subir; aí use `sv-enable <serviço>`.
-6. O resto do setup (oh-my-zsh, powerlevel10k, plugins, dotfiles, fonte, `EDITOR`, shell padrão).
+5. **Pacotes extras do Termux:** `termux-services` e `proot-distro`. Depois de instalado o `termux-services`, feche e abra o Termux de novo para o runit subir; aí use `sv-enable <serviço>`.
+6. **Arch Linux ARM no proot-distro.** O script roda `proot-distro install --name archlinuxarm danhunsaker/archlinuxarm:latest` (imagem de container do danhunsaker; o `proot-distro` atual aceita referências `usuário/imagem:tag`). Se o nome `archlinuxarm` já aparece em `proot-distro list`, pula. Se o download falhar, o script avisa, lista a falha no resumo final e segue. Para entrar: `proot-distro login archlinuxarm`; lá dentro, rode o mesmo `setup.sh` como root (modo proot, cria o usuário e aplica os dotfiles de `Distro Proot`). O script **não** roda esse segundo passo sozinho.
+7. O resto do setup (oh-my-zsh, powerlevel10k, plugins, dotfiles, fonte, `EDITOR`, shell padrão).
 
 Observações:
 
@@ -200,6 +202,7 @@ Observações:
 - **Prefira o Termux do F-Droid ou do GitHub, não o da Play Store.** A Play Store tem uma build não oficial (fork), com repositório próprio (`termux.net`) e sem a pasta de mirrors. Nos testes do autor ela também mostrou `gitstatus failed to initialize` no powerlevel10k, o que não ocorreu no F-Droid (causa não confirmada; relato do autor, não reproduzido aqui).
 - **O mirror muda a velocidade, não a segurança:** os pacotes são assinados (`termux-keyring`) e o `apt` confere a assinatura. Também não é "mais confiável" que o mirror oficial: o ganho é ficar com os mais próximos de você.
 - **A medição olha latência, não banda:** ela baixa só o arquivo `Release` (pequeno) de cada mirror. Num mirror com boa latência e banda ruim o ranking pode errar; nesse caso use `TERMUX_MIRROR_COUNT=1` ou escolha à mão com `termux-change-repo` e rode com `SKIP_TERMUX_MIRROR=1`. No único teste real (F-Droid) o ganho de velocidade não ficou comprovado: os 3 mirrors escolhidos diferiam em 19 ms de latência e o download ficou na mesma faixa do mirror sorteado antes. O ranking também ignora o peso dos mirrors, então o CDN oficial pode ficar de fora do conjunto.
+- **A imagem do Arch Linux ARM é de terceiros** (`danhunsaker/archlinuxarm`), não oficial do Arch Linux ARM nem do Termux, e é baixada na hora: tem tamanho considerável (use Wi-Fi) e o `proot-distro` pede a arquitetura do aparelho (o script não passa `--architecture`), então a imagem precisa ter build para ela; não verifiquei quais arquiteturas a imagem publica. O `--name` exige um `proot-distro` recente (nas versões antigas o nome saía de um alias interno); se o `pkg` do seu Termux trouxer uma versão antiga, atualize o pacote antes.
 - O `--dry-run` mostra todos esses comandos sem executar nada.
 
 ## WSL
