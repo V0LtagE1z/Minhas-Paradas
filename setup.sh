@@ -665,7 +665,7 @@ termux_mirror() {
     run pkg --check-mirror update -y
     return 0
   fi
-  log "Termux: medindo os mirrors (alguns segundos)..."
+  log "Termux: medindo os mirrors (alguns minutos)..."
   local -a ranked=()
   while IFS= read -r f; do
     case $f in *.dpkg-old|*.dpkg-new|*~) continue ;; esac
