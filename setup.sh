@@ -680,26 +680,33 @@ termux_mirror() {
     run pkg --check-mirror update -y
     return 0
   fi
-  log "Termux: medindo os mirrors (alguns minutos)..."
-  local -a ranked=()
+  log "Termux: medindo os mirrors em paralelo (até 5 s no total)..."
+  # Em paralelo: em série, cada mirror fora do ar custava até 8 s e a etapa levava minutos (ou parecia travada).
+  local tmp i=0 ranked; tmp=$(mktemp -d)
   while IFS= read -r f; do
     case $f in *.dpkg-old|*.dpkg-new|*~) continue ;; esac
     # O pkg também faz "source" desses arquivos (MAIN=, ROOT=, X11=, WEIGHT=); mesmo formato.
     url=$( . "$f" >/dev/null 2>&1; printf '%s' "${MAIN:-}" ) || url=""
     [[ $url == http*://* ]] || continue
-    t=$(curl -fsS -o /dev/null -m 8 -w '%{time_total}' "$url/dists/stable/Release" 2>/dev/null) || continue
-    ranked+=("$t $f")
+    i=$((i + 1))
+    ( t=$(curl -fsS -o /dev/null --connect-timeout 3 -m 5 -w '%{time_total}' "$url/dists/stable/Release" 2>/dev/null) \
+        && printf '%s %s %s\n' "$t" "$url" "$f" > "$tmp/$i" ) &
   done < <(find -L "$etc/mirrors" -type f)
-  if ((${#ranked[@]} == 0)); then
+  wait
+  # LC_ALL=C: com locale pt_BR o sort -n lê "0.123" com vírgula decimal e ordena errado.
+  # O awk tira duplicatas por URL (a pasta mirrors tem links como "default" para um mirror que já está lá).
+  ranked=$(cat "$tmp"/* 2>/dev/null | LC_ALL=C sort -n | awk '!seen[$2]++') || ranked=""
+  rm -rf "$tmp"
+  if [[ -z $ranked ]]; then
     warn "Termux: nenhum mirror respondeu na medição; mantenho o mirror atual"
     return 0
   fi
   rm -rf "$dir"; mkdir -p "$dir"
-  while read -r t f; do
+  while read -r t url f; do
     ((n++ < TERMUX_MIRROR_COUNT)) || break
     cp "$f" "$dir/"
     log "mirror: $(basename "$f") (${t}s)"
-  done < <(printf '%s\n' "${ranked[@]}" | sort -n)
+  done <<< "$ranked"
   ln -sfn "$dir" "$etc/chosen_mirrors"
   # --check-mirror: sem ele o pkg mantém o mirror atual enquanto ele responder (cache de 6 h) e ignora a troca.
   run pkg --check-mirror update -y || warn "pkg --check-mirror update falhou; o próximo passo (pkg update) vai mostrar o erro"
