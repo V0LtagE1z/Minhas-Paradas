@@ -9,6 +9,7 @@ Meus dotfiles de terminal em um script que monta tudo em uma máquina nova, seja
 | Caminho | Para que serve |
 | ------- | -------------- |
 | `setup.sh` | O script principal: cria o usuário `gustavo`, instala pacotes, locales, oh-my-zsh, powerlevel10k, plugins, Kitty e fontes e aplica os dotfiles. Funciona em distros de desktop, WSL, proot e Termux (veja "Gerenciadores e ambientes") |
+| `mirrors.sh` | Ranqueia os mirrors de novo, quando você quiser, sem refazer o resto. É só um atalho para `bash setup.sh --mirrors` (veja "Ranquear os mirrors de novo") |
 | `nvidia.sh` | Detecta a GPU NVIDIA e instala o driver (open, proprietário ou legado), com modeset, initramfs e PRIME. É independente do `setup.sh` (veja "nvidia.sh") |
 | `oxwm-setup.sh` e `config.lua` | Instalam a configuração do OXWM (gerenciador de janelas X11), migrada do Caelestia/Hyprland (veja "OXWM") |
 | `OXWM/` | Só uma nota (`MIMLeia.md`) sobre mover o `config.lua` para dentro dela |
@@ -76,6 +77,7 @@ Opções de linha de comando (`bash setup.sh --help` lista todas):
 | `--dry-run`, `-n` | Mostra o que seria feito sem alterar nada |
 | `--temas-minecraft` / `--sem-temas-minecraft` | Instala os temas Minecraft sem perguntar / não instala e não pergunta |
 | `--reverter-temas` | Desfaz os temas Minecraft e sai |
+| `--mirrors` | Só ranqueia os mirrors de novo (como `FORCE_MIRRORS=1`) e sai; é o que o `mirrors.sh` chama |
 | `--cachyos-repo` / `--sem-cachyos-repo` | Força / desliga os repositórios do CachyOS |
 | `--kernel-cachyos` / `--sem-kernel-cachyos` | Fedora: instala o kernel do CachyOS (COPR) sem perguntar / não instala e não pergunta |
 | `--help`, `-h` | Mostra a ajuda |
@@ -151,6 +153,20 @@ O que muda no Alpine, em relação às outras distros de desktop:
 No `--dry-run`, com o `apk` instalado, o script roda `apk add --simulate` em cada pacote e avisa os que não resolvem no índice local. É só informativo: a simulação não habilita o community e talvez não rode sem root.
 
 **Validação:** o suporte ao apk foi testado só com `--dry-run`, com um `apk` falso e com os applets do busybox no lugar dos GNU (Alpine com e sem cache do apk, postmarketOS, proot, `doas`, as recusas, o bootstrap do bash no ash e a edição do `repositories` em vários formatos). Não foi testado num Alpine ou postmarketOS de verdade; teste lá antes de confiar, principalmente `useradd` com o `shadow`, a senha do `gustavo` e o locale no login.
+
+## Ranquear os mirrors de novo
+
+O `setup.sh` já ranqueia os mirrors na primeira execução. Mirrors mudam (ficam lentos, saem do ar), então depois você pode refazer só essa etapa:
+
+```bash
+bash ~/Minhas-Paradas/mirrors.sh            # ou: bash setup.sh --mirrors
+bash ~/Minhas-Paradas/mirrors.sh --dry-run  # só mostra o que faria
+```
+
+- **Pacman (Arch, Arch Linux ARM, EndeavourOS, Artix, CachyOS, Manjaro; desktop e proot):** roda o ranking de novo, faz backup da `mirrorlist` em `.bak` e termina com `pacman -Syyu`, ou seja, **atualiza o sistema inteiro**. Pede root sozinho (como o `setup.sh`). Dentro do proot, rode como root.
+- **Termux:** mede os mirrors de novo e roda `pkg --check-mirror update`. Não faz `pkg upgrade`. Rode como usuário normal.
+- **Outras distros (apt, dnf, zypper, apk):** não há ranking para elas; o script avisa e sai sem mexer em nada.
+- `SKIP_MIRRORS=1` continua mandando; `TERMUX_MIRROR_COUNT` também. O `mirrors.sh` usa o `setup.sh` da mesma pasta, então o repo clonado em `~/Minhas-Paradas` precisa estar lá (o `setup.sh` o clona e atualiza).
 
 ## Simulação (--dry-run)
 
