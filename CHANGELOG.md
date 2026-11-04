@@ -2,7 +2,29 @@
 
 Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto não usa versões, então as entradas são por data.
 
-## Não lançado (branch `termux-proot-archlinuxarm`)
+## Não lançado (branch `rate-mirrors-alarm`)
+
+### 2026-11-03
+
+#### Adicionado (Arch Linux ARM)
+
+- **`rate-mirrors` no Arch Linux ARM (aarch64), desktop e proot.** Antes a etapa só rodava no Arch puro x86_64 (`ID=arch`). Agora `optimize_mirrors` também roda quando `IS_ALARM=1` e usa o subcomando `archarm`. O pacote não existe no ARM, então `download_rate_mirrors` baixa o binário estático `rate-mirrors-v0.34.1-aarch64-unknown-linux-musl` da release do GitHub, confere o sha256 (fixado em `RATE_MIRRORS_SHA256_AARCH64`) e o executa de um diretório temporário, removido ao sair. Sem `--protocol https` (a lista do ARM é toda `http`) e sem `--max-delay` (opção só do subcomando `arch`).
+- **No proot** (`prepare_proot_pacman`) o ranking roda depois do chaveiro e antes do upgrade; o `-Syyu` dele substitui o `-Syu` (pulado quando `PACMAN_SYNCED=1`). Se o `-Syyu` falhar no proot, só avisa (como o `-Syu` já fazia); no desktop continua parando o script.
+- Constantes novas: `RATE_MIRRORS_VERSION`, `RATE_MIRRORS_SHA256_AARCH64`, `RATE_MIRRORS_SHA256_X86_64` (as duas últimas só servem a quem rodar o fluxo de download em x86_64; no Arch x86_64 o pacote do `extra` continua sendo usado). `SKIP_MIRRORS=1` e `FORCE_MIRRORS=1` valem para o ARM também.
+- `README.md`: seção "Antes de tudo", passo 1 do proot e tabela de variáveis atualizados.
+
+#### Corrigido
+
+- A checagem "a mirrorlist já foi gerada pelo rate-mirrors" procurava `# ARGS: rate-mirrors`, mas o binário da release se chama `rate_mirrors` (com `_`) e aparece com o caminho completo no cabeçalho. Agora casa `# ARGS: .*rate[-_]mirrors`; sem isso o ranking refaria tudo a cada execução no ARM.
+
+#### Decisões e limites
+
+- **Versão e sha256 fixos** de propósito: o binário roda como root, então o download não segue "latest". Para atualizar, troque a versão e os dois hashes (`sha256sum` dos `.tar.gz` da release).
+- **Não foi testado num Arch Linux ARM real.** Foi testado com `--dry-run` (ALARM em proot, Arch x86_64, CachyOS que pula, armv7 que avisa) e com um `pacman` falso, baixando e executando de verdade o binário x86_64 da mesma release (download, sha256, extração, subcomando `archarm`, backup da mirrorlist, segunda rodada que pula, sha256 adulterado que recusa, `-Syyu` falhando no proot e no desktop). O binário aarch64 só teve o sha256 conferido, não foi executado. Nessa simulação o teste de velocidade não alcançou os mirrors, então o ranking real (ordem por velocidade) não foi visto.
+- Derivadas do Arch que o `rate-mirrors` também suporta (CachyOS, EndeavourOS, Manjaro, Artix) **não** foram incluídas: seguem mantendo a mirrorlist delas.
+- O `rate-mirrors` imprime o resultado inteiro no terminal durante o ranking (comportamento dele, já era assim no Arch).
+
+## Antes (branch `termux-proot-archlinuxarm`, PR #10)
 
 ### 2026-11-03
 
