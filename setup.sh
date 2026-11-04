@@ -17,8 +17,8 @@
 #
 # Distros de desktop: rode como root (ou com sudo). O script
 #   0. no Arch e derivadas (pacman): garante core, extra e multilib habilitados no pacman.conf;
-#      só no Arch puro: ranqueia os mirrors com o rate-mirrors, atualiza o sistema (pacman -Syyu)
-#      e instala os repositórios do CachyOS (script oficial cachyos-repo.sh);
+#      só no Arch puro e no Arch Linux ARM: ranqueia os mirrors com o rate-mirrors e atualiza o sistema (pacman -Syyu);
+#      só no Arch puro: instala os repositórios do CachyOS (script oficial cachyos-repo.sh);
 #   1. instala os pacotes do sistema e gera os locales pt_BR.UTF-8 e en_US.UTF-8
 #      (locale.conf: LANG=pt_BR.UTF-8, LC_MESSAGES=en_US.UTF-8);
 #   2. cria o usuário "gustavo" (home /home/gustavo, shell zsh, grupos wheel/audio/video)
@@ -26,7 +26,7 @@
 #   3. dá sudo a ele e pede a senha dele;
 #   4. executa o setup tradicional (paru, oh-my-zsh, p10k, dotfiles, Kitty, fontes) COMO esse usuário.
 # Distros em proot: rode como root. O script
-#   1. ajusta o pacman (só se a distro usar pacman) e instala os pacotes do sistema;
+#   1. ajusta o pacman (só se a distro usar pacman; no Arch Linux ARM ranqueia os mirrors) e instala os pacotes do sistema;
 #   2. cria o usuário "gustavo" (home /home/gustavo, shell zsh, grupos wheel/audio/video), instala o sudo
 #      para ele (o setuid pode não funcionar no proot: o script testa no fim e avisa) e troca o shell do root para zsh;
 #   3. aplica os dotfiles de "Distro Proot" no root e executa o setup COMO esse usuário (via su).
@@ -91,11 +91,17 @@ NEW_USER="${NEW_USER:-gustavo}"
 NEW_HOME="/home/$NEW_USER"
 NEW_GROUPS=(wheel audio video)
 
-# Arch puro (desktop): ranqueia os mirrors com o rate-mirrors antes de instalar qualquer coisa.
+# Arch puro e Arch Linux ARM: ranqueia os mirrors com o rate-mirrors antes de instalar qualquer coisa.
 # SKIP_MIRRORS=1 pula essa etapa; FORCE_MIRRORS=1 ranqueia de novo mesmo se já foi feito.
 SKIP_MIRRORS="${SKIP_MIRRORS:-0}"
 FORCE_MIRRORS="${FORCE_MIRRORS:-0}"
 MIRRORLIST_FILE="${MIRRORLIST_FILE:-/etc/pacman.d/mirrorlist}"
+# O Arch Linux ARM não tem o pacote rate-mirrors: baixa o binário estático (musl) da release do GitHub.
+# Versão fixa e sha256 conferido (o binário roda como root). Para atualizar: troque os três valores.
+RATE_MIRRORS_VERSION="v0.34.1"
+RATE_MIRRORS_SHA256_AARCH64="bc6ad71271af2118eee8a8feeb49a29b2127c706369a732517cf15007e1e276d"
+RATE_MIRRORS_SHA256_X86_64="7c90c3f13a829b1493a7381dc4743e8b4a4d4774a41abd6e954d64deb9f47016"
+RATE_MIRRORS="rate-mirrors"   # comando; vira o binário baixado quando o pacote não existe
 
 # Arch e derivadas (desktop): deixa [core], [extra] e [multilib] habilitados no pacman.conf.
 # SKIP_PACMAN_REPOS=1 pula a etapa. O Include das seções é PACMAN_MIRRORLIST_INCLUDE.
@@ -318,7 +324,7 @@ Variáveis úteis: NEW_USER (padrão: gustavo), REPO_URL, REPO_DIR,
                  FORCE_WSL=1 (força o modo WSL) ou FORCE_WSL=0 (desliga a detecção de WSL),
                  WSL_SET_DEFAULT_USER=0 (no WSL, não define $NEW_USER como usuário padrão no wsl.conf),
                  WSL_INSTALL_GUI=1 (no WSL, instala também Kitty e a fonte MesloLGS NF no Linux),
-                 SKIP_MIRRORS=1 (não ranquear os mirrors no Arch),
+                 SKIP_MIRRORS=1 (não ranquear os mirrors no Arch nem no Arch Linux ARM),
                  FORCE_MIRRORS=1 (ranquear de novo mesmo se já foi feito),
                  SKIP_PACMAN_REPOS=1 (não mexer em core/extra/multilib no pacman.conf),
                  CACHYOS_REPO=auto|1|0 (repositórios do CachyOS: só Arch/EndeavourOS | forçar | pular),
@@ -659,7 +665,7 @@ termux_mirror() {
     run pkg --check-mirror update -y
     return 0
   fi
-  log "Termux: medindo os mirrors (alguns segundos)..."
+  log "Termux: medindo os mirrors (alguns minutos)..."
   local -a ranked=()
   while IFS= read -r f; do
     case $f in *.dpkg-old|*.dpkg-new|*~) continue ;; esac
@@ -784,23 +790,64 @@ install_desktop_packages() {
   done
 }
 
-# ─── Mirrors no Arch puro (desktop) ───────────────────────────────────────────
-# Só no Arch puro (ID=arch). CachyOS, EndeavourOS, Arch ARM etc. têm mirrorlists próprias
-# e não devem ser sobrescritas com a lista do Arch. O rate-mirrors está no repo oficial [extra].
-optimize_mirrors() {
-  [[ $PM == pacman ]] && is_desktop || return 0
-  if [[ $SKIP_MIRRORS == 1 ]]; then log "mirrors: etapa pulada (SKIP_MIRRORS=1)"; return 0; fi
-  if ! grep -qE '^ID="?arch"?$' "${OS_RELEASE_FILE:-/etc/os-release}" 2>/dev/null; then
-    log "mirrors: não é Arch puro, mantendo a mirrorlist atual"; return 0
+# ─── Mirrors no Arch puro e no Arch Linux ARM ─────────────────────────────────
+# Só no Arch puro (ID=arch) e no Arch Linux ARM (IS_ALARM, desktop ou proot). CachyOS, EndeavourOS etc.
+# têm mirrorlists próprias e não devem ser sobrescritas com a lista do Arch. No Arch o rate-mirrors está
+# no repo oficial [extra]; no ARM não, então vem o binário da release (download_rate_mirrors).
+
+# Baixa o rate-mirrors da release do GitHub para um diretório temporário e deixa o caminho em RATE_MIRRORS.
+# Só há binário para aarch64 e x86_64; outra CPU (ex.: armv7) segue com os mirrors atuais.
+download_rate_mirrors() {
+  local m=${UNAME_M:-$(uname -m 2>/dev/null || true)} sum url dir v=$RATE_MIRRORS_VERSION
+  case $m in
+    aarch64|arm64) m=aarch64; sum=$RATE_MIRRORS_SHA256_AARCH64 ;;
+    x86_64)        sum=$RATE_MIRRORS_SHA256_X86_64 ;;
+    *) warn "rate-mirrors: não há binário pronto para $m (só aarch64 e x86_64); seguindo com os mirrors atuais"; return 1 ;;
+  esac
+  url="https://github.com/westandskif/rate-mirrors/releases/download/$v/rate-mirrors-$v-$m-unknown-linux-musl.tar.gz"
+  dir=$(mktemp -d); CLEANUP_DIRS+=("$dir")
+  RATE_MIRRORS=$dir/rate_mirrors   # o binário da release se chama rate_mirrors (com _)
+  if ((DRY_RUN)); then
+    run curl -fsSL -o "$dir/rate-mirrors.tar.gz" "$url"
+    log "(conferiria o sha256 $sum e extrairia o rate_mirrors)"
+    return 0
   fi
-  if [[ $FORCE_MIRRORS != 1 ]] && grep -q '^# ARGS: rate-mirrors' "$MIRRORLIST_FILE" 2>/dev/null; then
+  command -v curl >/dev/null && command -v tar >/dev/null && command -v sha256sum >/dev/null \
+    || { warn "rate-mirrors: preciso de curl, tar e sha256sum para baixar o binário; seguindo com os mirrors atuais"; return 1; }
+  log "Baixando o rate-mirrors $v ($m)..."
+  if ! curl -fsSL -o "$dir/rate-mirrors.tar.gz" "$url"; then
+    warn "rate-mirrors: o download falhou; seguindo com os mirrors atuais"; return 1
+  fi
+  if ! echo "$sum  $dir/rate-mirrors.tar.gz" | sha256sum -c --status; then
+    warn "rate-mirrors: o sha256 do download não confere; não vou executá-lo. Seguindo com os mirrors atuais"; return 1
+  fi
+  tar -xzf "$dir/rate-mirrors.tar.gz" -C "$dir" --strip-components=1 \
+    && [[ -x $RATE_MIRRORS ]] \
+    || { warn "rate-mirrors: não consegui extrair o binário; seguindo com os mirrors atuais"; return 1; }
+}
+
+optimize_mirrors() {
+  [[ $PM == pacman ]] || return 0
+  if [[ $SKIP_MIRRORS == 1 ]]; then log "mirrors: etapa pulada (SKIP_MIRRORS=1)"; return 0; fi
+  if ((! IS_ALARM)) && ! grep -qE '^ID="?arch"?$' "${OS_RELEASE_FILE:-/etc/os-release}" 2>/dev/null; then
+    log "mirrors: não é Arch puro nem Arch Linux ARM, mantendo a mirrorlist atual"; return 0
+  fi
+  # O binário baixado se chama rate_mirrors (com _), então o cabeçalho "# ARGS:" pode trazer um dos dois nomes.
+  if [[ $FORCE_MIRRORS != 1 ]] && grep -qE '^# ARGS: .*rate[-_]mirrors' "$MIRRORLIST_FILE" 2>/dev/null; then
     log "mirrors: a mirrorlist já foi gerada pelo rate-mirrors (FORCE_MIRRORS=1 para refazer)"; return 0
   fi
 
+  # Arch: só https e --max-delay (idade máxima da sincronização, opção do subcomando "arch").
+  # Arch Linux ARM: subcomando "archarm"; a lista oficial dele é toda http (os pacotes são assinados), então
+  # --protocol https não deixaria nenhum mirror; --max-delay não existe nesse subcomando.
+  local sub=(arch --max-delay=21600) proto=(--protocol https)
+  if ((IS_ALARM)); then sub=(archarm); proto=(); fi
+
   if ((DRY_RUN)); then
     log "Ranquearia os mirrors com o rate-mirrors e atualizaria o sistema:"
-    run $SUDO pacman -S --needed --noconfirm rate-mirrors
-    run rate-mirrors --allow-root --protocol https --save=/tmp/mirrorlist.novo arch --max-delay=21600
+    if ((IS_ALARM)); then download_rate_mirrors || return 0
+    else run $SUDO pacman -S --needed --noconfirm rate-mirrors; fi
+    run "$RATE_MIRRORS" --allow-root ${proto[@]+"${proto[@]}"} --save=/tmp/mirrorlist.novo "${sub[@]}"
     run $SUDO cp -a "$MIRRORLIST_FILE" "$MIRRORLIST_FILE.bak"
     run $SUDO install -m 644 /tmp/mirrorlist.novo "$MIRRORLIST_FILE"
     # -yy só se justifica logo após trocar de mirror, e SEMPRE junto com -u (senão é update parcial).
@@ -810,7 +857,9 @@ optimize_mirrors() {
   fi
 
   if ! command -v rate-mirrors >/dev/null; then
-    if ! $SUDO pacman -S --needed --noconfirm rate-mirrors; then
+    if ((IS_ALARM)); then
+      download_rate_mirrors || return 0
+    elif ! $SUDO pacman -S --needed --noconfirm rate-mirrors; then
       # Banco de dados antigo (404): atualiza o sistema inteiro, nunca só o banco (-Sy isolado = update parcial).
       warn "falha ao instalar o rate-mirrors; tentando com atualização completa do sistema"
       $SUDO pacman -Syu --noconfirm rate-mirrors \
@@ -821,8 +870,8 @@ optimize_mirrors() {
   log "Ranqueando os mirrors (pode levar 1-2 minutos)..."
   local tmp; tmp=$(mktemp)
   CLEANUP_FILES+=("$tmp")
-  # --allow-root: esta fase roda como root. Opções gerais vêm antes do "arch"; --max-delay é do subcomando.
-  if ! rate-mirrors --allow-root --protocol https --save="$tmp" arch --max-delay=21600 \
+  # --allow-root: esta fase roda como root. Opções gerais vêm antes do subcomando; --max-delay é do "arch".
+  if ! "$RATE_MIRRORS" --allow-root ${proto[@]+"${proto[@]}"} --save="$tmp" "${sub[@]}" \
      || ! grep -q '^Server' "$tmp"; then
     warn "o rate-mirrors falhou; seguindo com os mirrors atuais"
     return 0
@@ -838,8 +887,12 @@ optimize_mirrors() {
   # Atualizar o banco sem atualizar os pacotes quebra o sistema; por isso -Syyu, nunca -Syy.
   # Também garante que o paru seja compilado depois, contra a libalpm já atualizada.
   log "Atualizando o sistema a partir dos novos mirrors (pacman -Syyu)..."
-  $SUDO pacman -Syyu --noconfirm \
-    || die "pacman -Syyu falhou. Rode 'pacman -Syu' manualmente até funcionar e execute o script de novo."
+  if ! $SUDO pacman -Syyu --noconfirm; then
+    # No proot um rootfs de ARM antigo falha por motivos que o desktop não tem: só avisa, como o -Syu de prepare_proot_pacman.
+    ((PROOT)) || die "pacman -Syyu falhou. Rode 'pacman -Syu' manualmente até funcionar e execute o script de novo."
+    warn "pacman -Syyu falhou; os pacotes abaixo podem falhar"
+    return 0
+  fi
   PACMAN_SYNCED=1
   log "sistema atualizado (se o kernel mudou, reinicie no fim)"
 }
@@ -1345,9 +1398,12 @@ prepare_proot_pacman() {
   ((PROOT)) && [[ $PM == pacman ]] || return 0
   patch_pacman_conf
   init_keyring
+  optimize_mirrors   # só ALARM e Arch: mirrors mais rápidos antes do upgrade; já faz o -Syyu
   # Rootfs de ARM costuma ser antigo: -Sy sem -u causaria atualização parcial.
-  log "Atualizando o sistema (pacman -Syu)..."
-  run $SUDO pacman -Syu --noconfirm || warn "pacman -Syu falhou; os pacotes abaixo podem falhar"
+  if ((! PACMAN_SYNCED)); then
+    log "Atualizando o sistema (pacman -Syu)..."
+    run $SUDO pacman -Syu --noconfirm || warn "pacman -Syu falhou; os pacotes abaixo podem falhar"
+  fi
   # O -Syu pode ter trazido um pacman mais novo, com outras opções de sandbox.
   patch_pacman_conf
 }
@@ -1556,7 +1612,7 @@ wsl_font_hint() {
 system_phase() {
   enable_apk_repos     # Alpine/postmarketOS: repositório community, antes de qualquer pacote
   enable_pacman_repos  # Arch e derivadas: core/extra/multilib no pacman.conf, antes de qualquer pacote
-  optimize_mirrors     # Arch puro: rate-mirrors + atualização completa
+  optimize_mirrors     # Arch puro e Arch Linux ARM: rate-mirrors + atualização completa
   sync_pacman_repos    # se o pacman.conf mudou e nenhum -Syu rodou ainda
   setup_cachyos_repo   # Arch/EndeavourOS x86_64: repositórios do CachyOS (cachyos-repo.sh)
   pm_update
