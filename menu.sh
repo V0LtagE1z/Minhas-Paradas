@@ -43,7 +43,7 @@ while :; do
 
   1) Setup completo (usuário, zsh, p10k, dotfiles)
   2) Setup — só simular (--dry-run, não altera nada)
-  3) Ranquear os mirrors de novo
+  3) Ranquear os mirrors (no Arch e derivadas, atualiza o sistema)
   4) Reverter os temas Minecraft (GRUB + Plymouth)
   5) NVIDIA — detectar GPU e ambiente (só leitura)
   6) NVIDIA — instalar o driver
