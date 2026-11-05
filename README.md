@@ -172,7 +172,7 @@ Uma tela com as opções; cada uma roda o script certo **como processo filho** e
 | 4 | `setup.sh --reverter-temas` |
 | 5, 6, 7 | `nvidia.sh` (detecção), `nvidia.sh install`, `nvidia.sh install --dry-run` |
 | 8 | `oxwm-setup.sh` |
-| `r`, `d` | Reiniciar e desligar (pedem confirmação; usam `sudo` ou `doas`). No Termux avisa que não dá; em proot/container o comando falha e o menu avisa |
+| `r`, `d` | Reiniciar e desligar (pedem confirmação; usam `sudo` ou `doas`). No Termux avisa que não dá; no WSL não faz nada e mostra o comando certo (`wsl --shutdown`, rodado no Windows); em proot/container o comando falha e o menu avisa |
 | `e` | Fecha o terminal atual: manda SIGHUP ao shell que chamou o menu. Se o menu foi chamado por `sudo`, não acha o shell com segurança e pede para você digitar `exit` |
 | `q` | Sai só do menu |
 

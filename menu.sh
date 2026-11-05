@@ -37,6 +37,12 @@ run_script() {  # script [args...] — roda como filho: um die/exit do script n�
 
 power() {  # reboot|poweroff  verbo-no-infinitivo
   if [[ ${PREFIX:-} == *com.termux* ]]; then echo "[!!] O Termux não consegue $2 o aparelho."; return; fi
+  local k=${KERNEL_RELEASE:-$(uname -r)}   # mesma detecção do setup.sh; KERNEL_RELEASE existe para o teste
+  if [[ ${k,,} == *microsoft* || ${k,,} == *wsl* ]]; then   # reboot/poweroff aqui não fazem nada: quem manda na distro é o Windows
+    echo "[!!] No WSL não dá para $2 por aqui. No Windows (PowerShell ou CMD) rode: wsl --shutdown"
+    echo "     (isso para todas as distros WSL; depois é só abrir a distro de novo)"
+    return
+  fi
   yes_no "Confirma $2 agora?" || return 0
   local su=""
   ((EUID)) && su=$(command -v sudo || command -v doas)   # doas: Alpine sem sudo
