@@ -2,6 +2,27 @@
 
 Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto não usa versões, então as entradas são por data.
 
+## Não lançado (branch `menu-cli`, a partir da `main`)
+
+### 2026-11-05
+
+#### Adicionado
+
+- **`menu.sh`: menu de linha de comando.** Mostra as opções (setup, simulação, mirrors, reverter temas Minecraft, NVIDIA detectar/instalar/simular, OXWM), roda o script escolhido como processo filho e **volta sempre à tela inicial**, mostrando o código de saída. Também tem reiniciar, desligar (com confirmação; `sudo` ou `doas`) e fechar o terminal atual (SIGHUP no shell que chamou o menu). Lê as respostas de `/dev/tty`.
+- **`setup.sh --sem-encerrar`.** Não pergunta "Deseja encerrar a sessão?" no fim. Necessário porque a pergunta fecha o primeiro shell acima do script, que sob o menu seria o próprio menu. O menu usa a flag na opção de setup; fora do menu nada muda.
+- `tests/menu.test.sh`: roda o menu com scripts de mentira e confere a flag, o código de saída de um filho que falha, a opção inválida e a recusa do reinício.
+- `README.md`: seção "Menu" e linhas na tabela de arquivos.
+
+#### Planejado (não implementado)
+
+- **Menu pela internet com `curl`** (`curl -fsSL <URL> | bash`). O menu já lê de `/dev/tty`, mas ainda acha os scripts pela pasta dele e o `setup.sh` precisa estar em arquivo; a entrada remota terá de clonar o repo (ou baixar o tarball) e rodar o `menu.sh` de dentro dele. Sem URL definida ainda; o ideal é fixar uma tag ou commit. Detalhes no README, em "Planejado".
+
+#### Decisões e limites
+
+- **O menu escolhe o script, não cada etapa.** O `setup.sh` é um bloco só; dividir em etapas escolhíveis exigiria mexer em ~2700 linhas e não foi feito.
+- **Não há opção "só instalar os temas Minecraft":** `--temas-minecraft` só responde a pergunta e o resto do setup roda junto. Só a reversão existe como item.
+- **Testado:** `bash -n`, `tests/menu.test.sh` e `setup.sh --dry-run --sem-encerrar` num Debian de teste. **Não testado:** reiniciar, desligar e fechar o terminal de verdade; o menu num Termux, Alpine ou WSL reais; as opções 1, 6 e 8 em máquina real.
+
 ## Não lançado (branch `mirrors-sh`, em cima da `termux-mirror-rapido`)
 
 ### 2026-11-04

@@ -10,6 +10,8 @@ Meus dotfiles de terminal em um script que monta tudo em uma máquina nova, seja
 | ------- | -------------- |
 | `setup.sh` | O script principal: cria o usuário `gustavo`, instala pacotes, locales, oh-my-zsh, powerlevel10k, plugins, Kitty e fontes e aplica os dotfiles. Funciona em distros de desktop, WSL, proot e Termux (veja "Gerenciadores e ambientes") |
 | `mirrors.sh` | Ranqueia os mirrors de novo, quando você quiser, sem refazer o resto. É só um atalho para `bash setup.sh --mirrors` (veja "Ranquear os mirrors de novo") |
+| `menu.sh` | Menu de linha de comando: escolhe o que rodar (setup, mirrors, NVIDIA, OXWM), executa o script e volta ao menu; também reinicia, desliga e fecha o terminal (veja "Menu") |
+| `tests/menu.test.sh` | Teste do `menu.sh` com scripts de mentira; não altera o sistema |
 | `nvidia.sh` | Detecta a GPU NVIDIA e instala o driver (open, proprietário ou legado), com modeset, initramfs e PRIME. É independente do `setup.sh` (veja "nvidia.sh") |
 | `oxwm-setup.sh` e `config.lua` | Instalam a configuração do OXWM (gerenciador de janelas X11), migrada do Caelestia/Hyprland (veja "OXWM") |
 | `OXWM/` | Só uma nota (`MIMLeia.md`) sobre mover o `config.lua` para dentro dela |
@@ -51,7 +53,7 @@ Como rodar depende do ambiente:
 | WSL | Como root ou com `sudo`, dentro da distro (o script detecta o ambiente) | Igual às distros de desktop, sem bootloader, temas, Kitty e fonte, e com login automático no `gustavo` (veja a seção do WSL) |
 | Distro em proot (qualquer uma) | Como root (o script detecta o ambiente) | Cria o usuário `gustavo` com `sudo` (se o proot permitir; o script testa) e aplica o setup nele e no root (veja abaixo) |
 
-O script precisa estar salvo em arquivo (`git clone` e `bash setup.sh`). Rodar via `curl ... | bash` não funciona nas distros, porque a segunda fase reexecuta o próprio arquivo.
+O script precisa estar salvo em arquivo (`git clone` e `bash setup.sh`). Rodar via `curl ... | bash` não funciona nas distros, porque a segunda fase reexecuta o próprio arquivo. Para escolher o que rodar por um menu, use `bash menu.sh` (veja "Menu"; o acesso por `curl` está só planejado).
 
 Para ver tudo o que seria feito sem alterar nada, use `bash setup.sh --dry-run`.
 
@@ -153,6 +155,39 @@ O que muda no Alpine, em relação às outras distros de desktop:
 No `--dry-run`, com o `apk` instalado, o script roda `apk add --simulate` em cada pacote e avisa os que não resolvem no índice local. É só informativo: a simulação não habilita o community e talvez não rode sem root.
 
 **Validação:** o suporte ao apk foi testado só com `--dry-run`, com um `apk` falso e com os applets do busybox no lugar dos GNU (Alpine com e sem cache do apk, postmarketOS, proot, `doas`, as recusas, o bootstrap do bash no ash e a edição do `repositories` em vários formatos). Não foi testado num Alpine ou postmarketOS de verdade; teste lá antes de confiar, principalmente `useradd` com o `shadow`, a senha do `gustavo` e o locale no login.
+
+## Menu
+
+```bash
+bash menu.sh
+```
+
+Uma tela com as opções; cada uma roda o script certo **como processo filho** e, quando ele termina (ou falha), mostra o código de saída e volta para a tela inicial.
+
+| Opção | O que roda |
+| ----- | ---------- |
+| 1 | `setup.sh --sem-encerrar` |
+| 2 | `setup.sh --dry-run --sem-encerrar` (só simula) |
+| 3 | `mirrors.sh` |
+| 4 | `setup.sh --reverter-temas` |
+| 5, 6, 7 | `nvidia.sh` (detecção), `nvidia.sh install`, `nvidia.sh install --dry-run` |
+| 8 | `oxwm-setup.sh` |
+| `r`, `d` | Reiniciar e desligar (pedem confirmação; usam `sudo` ou `doas`). No Termux avisa que não dá; em proot/container o comando falha e o menu avisa |
+| `e` | Fecha o terminal atual: manda SIGHUP ao shell que chamou o menu. Se o menu foi chamado por `sudo`, não acha o shell com segurança e pede para você digitar `exit` |
+| `q` | Sai só do menu |
+
+- **O menu escolhe o script, não cada etapa dentro dele.** O `setup.sh` continua sendo um bloco só (pacotes, usuário, dotfiles...); quem quiser pular partes usa as opções e variáveis dele (`--help`).
+- **`--sem-encerrar`:** o `setup.sh` normalmente pergunta no fim "Deseja encerrar a sessão?" e fecha o shell que o chamou. Sob o menu esse shell seria o próprio menu, então a opção 1 passa `--sem-encerrar` e a pergunta some; use `e` quando quiser fechar o terminal.
+- **Rode como usuário normal.** O `setup.sh` e o `oxwm-setup.sh` pedem `sudo` sozinhos; o `nvidia.sh` recusa root.
+- **Teste:** `bash tests/menu.test.sh` (scripts de mentira, respostas por arquivo).
+
+### Planejado: rodar o menu pela internet com `curl`
+
+**Não implementado.** A ideia é abrir o menu numa máquina nova só com um comando, algo como `curl -fsSL <URL do menu.sh> | bash`. O que falta:
+
+- O `menu.sh` acha os outros scripts pela pasta dele (`MENU_DIR`), e o `setup.sh` precisa estar em arquivo (a segunda fase reexecuta o próprio arquivo). Via `curl | bash` essa pasta não existe. A entrada remota terá de clonar este repo (ou baixar o tarball, se não houver `git`) e rodar o `menu.sh` de dentro do clone.
+- O menu já lê as respostas de `/dev/tty` e não do stdin, que é o que o `curl | bash` ocupa; essa parte já está pronta.
+- Ainda não existe URL fixa. Quando existir, o ideal é apontar para uma tag ou commit, e não para a `main`, já que quem roda `curl | bash` executa o que estiver lá no momento.
 
 ## Ranquear os mirrors de novo
 
