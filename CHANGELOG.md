@@ -2,7 +2,37 @@
 
 Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto não usa versões, então as entradas são por data.
 
-## Não lançado (branch `rate-mirrors-alarm`)
+## Não lançado (branch `rate-mirrors-derivadas`)
+
+### 2026-11-04
+
+#### Adicionado (mirrors por distro)
+
+- **CachyOS:** `mirrors_cachyos` roda o `cachyos-rate-mirrors` (instala o pacote se faltar), com backup `*.bak` da `mirrorlist` e da `cachyos-mirrorlist`, e fecha com `pacman -Syyu`. Roda sem opções: o script do CachyOS é um wrapper do `rate-mirrors` com opções fixas.
+- **EndeavourOS** e **Artix:** passam pelo mesmo fluxo do Arch (`rate-mirrors`), com os subcomandos `arch` e `artix` (`--protocol https --max-delay=21600`). A `endeavouros-mirrorlist` e a `mirrorlist-arch` do Artix não são tocadas.
+- **Manjaro:** `mirrors_manjaro` usa o `pacman-mirrors --fasttrack 5` do sistema e fecha com `pacman -Syyu`.
+- **Fedora:** `tune_dnf` grava `max_parallel_downloads=10` no `/etc/dnf/dnf.conf` (mantém o valor se já existir). Não liga `fastestmirror`.
+- **Plano B do binário:** se `pacman -S rate-mirrors` falhar mesmo depois do `-Syu`, usa `download_rate_mirrors` (versão e sha256 fixos), em vez de desistir.
+- Funções auxiliares `mirrors_backup_once` e `mirrors_upgrade` (o `-Syyu` deixou de ser repetido em cada fluxo). Variáveis de teste `CACHYOS_MIRRORLIST_FILE` e `DNF_CONF`.
+- `README.md`: seção "Antes de tudo" virou uma tabela por distro; tabela de gerenciadores, de variáveis e proot atualizadas.
+
+#### Corrigido
+
+- `SKIP_MIRRORS` e `FORCE_MIRRORS` não atravessavam o `sudo` na reexecução como root (o `sudo env` só repassava uma lista fixa de variáveis); agora são repassadas.
+
+#### Mudou de comportamento
+
+- No **proot**, `prepare_proot_pacman` também ranqueia mirrors em EndeavourOS, Artix, CachyOS e Manjaro (antes só ALARM e Arch).
+
+#### Decisões e limites
+
+- **Debian e Ubuntu: nada foi implementado, de propósito.** O `rate-mirrors` não lista subcomando para eles e o `apt` não tem o que reordenar sem fixar um mirror. Se quiser, dá para fazer um `netselect-apt` opcional (Debian), mas é decisão sua.
+- **Testado:** `bash -n`; `--dry-run` em Arch, EndeavourOS, Artix, CachyOS, Manjaro, Garuda e Fedora; fluxos reais (sem `--dry-run`) com `pacman`, `cachyos-rate-mirrors` e `pacman-mirrors` falsos (backup uma vez só, pulo na segunda rodada, `FORCE_MIRRORS=1`, falha da ferramenta sem `-Syyu`, pacote ausente, `SKIP_MIRRORS=1`); `tune_dnf` em `dnf.conf` com `[main]`, sem `[main]`, vazio, inexistente e com valor já definido; e a linha de comando `artix`/`arch` aceita pelo binário real v0.34.1.
+- **Não foi testado em sistema real** (CachyOS, Manjaro, Artix, EndeavourOS, Fedora). O ranking de verdade não foi visto: o ambiente de teste não alcança os mirrors.
+- **Não conferi:** o nome do pacote `cachyos-rate-mirrors` nos repositórios do CachyOS (só uso se o comando não existir), se o wrapper grava o cabeçalho `# ARGS:` (sem ele o ranking refaz a cada execução) e se o `rate-mirrors` existe nos repositórios do Artix (se não existir, cai no binário da release).
+- O Pamac do Manjaro pode reescrever a mirrorlist toda semana por um timer próprio; o script não mexe nele.
+
+## Antes (branch `rate-mirrors-alarm`)
 
 ### 2026-11-03
 
