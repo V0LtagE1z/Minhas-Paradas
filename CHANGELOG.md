@@ -2,7 +2,21 @@
 
 Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto não usa versões, então as entradas são por data.
 
-## Não lançado (branch `termux-mirror-rapido`, em cima da `termux-proot-x86_64`)
+## Não lançado (branch `mirrors-sh`, em cima da `termux-mirror-rapido`)
+
+### 2026-11-04
+
+#### Adicionado
+
+- **`mirrors.sh` e `setup.sh --mirrors`.** Refazem só a etapa de mirrors depois do setup inicial (pacman: ranking + `pacman -Syyu`; Termux: medição + `pkg --check-mirror update`), sem instalar nem alterar mais nada. O `mirrors.sh` é um atalho de 1 linha para o `setup.sh --mirrors`, então a lógica continua em um lugar só. `--mirrors` liga `FORCE_MIRRORS=1`; aceita `--dry-run`. Outros gerenciadores (apt, dnf, zypper, apk): avisa e sai.
+- `README.md`: seção "Ranquear os mirrors de novo", tabelas de arquivos e de opções.
+
+#### Decisões e limites
+
+- **Não duplica código:** extrair as funções para um arquivo à parte exigiria mexer em ~250 linhas do `setup.sh` (que depende de `run`, `log`, `SUDO`, detecção de proot/ALARM). Por isso o `mirrors.sh` só chama o `setup.sh`.
+- **Testado:** `bash -n` e `--dry-run` em apt (avisa e sai), Termux simulado e Arch Linux ARM em proot simulado (fluxo completo do rate-mirrors em `[dry]`). **Não testado:** Arch desktop real (a reexecução com sudo repassa `--mirrors`, mas não foi exercitada) nem os ramos de root em máquina real.
+
+## Antes (branch `termux-mirror-rapido`, em cima da `termux-proot-x86_64`)
 
 ### 2026-11-04
 

@@ -239,6 +239,7 @@ MC_FONTCONF_FILE="${MC_FONTCONF_FILE:-/etc/fonts/conf.d/00-minecraft.conf}"
 DRACUT_CONF_D="${DRACUT_CONF_D:-/etc/dracut.conf.d}"
 INITRAMFS_HOOKS_DIR="${INITRAMFS_HOOKS_DIR:-/usr/share/initramfs-tools/hooks}"
 REVERT_MC=0   # 1 = --reverter-temas
+MIRRORS_ONLY=0   # 1 = --mirrors (só reranqueia os mirrors; é o que o mirrors.sh chama)
 
 # ─── Utilidades ───────────────────────────────────────────────────────────────
 DRY_RUN="${DRY_RUN:-0}"   # 1 = só mostra o que seria feito (--dry-run)
@@ -322,6 +323,7 @@ Uso: bash setup.sh [--dry-run]
   --temas-minecraft       instala os temas Minecraft (GRUB + Plymouth) sem perguntar (só desktop; no WSL é ignorado)
   --sem-temas-minecraft   não instala e não pergunta pelos temas Minecraft
   --reverter-temas        desfaz os temas Minecraft (GRUB + Plymouth) e sai; não faz mais nada
+  --mirrors               só ranqueia os mirrors de novo (como FORCE_MIRRORS=1) e sai; o mesmo que bash mirrors.sh
   --cachyos-repo          instala os repositórios do CachyOS mesmo em derivadas fora da lista automática
   --sem-cachyos-repo      não instala os repositórios do CachyOS
   --kernel-cachyos        Fedora: instala o kernel do CachyOS (COPR) sem perguntar
@@ -363,6 +365,7 @@ parse_args() {
       --temas-minecraft)      MC_THEMES=1 ;;
       --sem-temas-minecraft)  MC_THEMES=0 ;;
       --reverter-temas)       REVERT_MC=1 ;;
+      --mirrors)              MIRRORS_ONLY=1; FORCE_MIRRORS=1 ;;
       --cachyos-repo)         CACHYOS_REPO=1 ;;
       --sem-cachyos-repo)     CACHYOS_REPO=0 ;;
       --kernel-cachyos)       CACHYOS_KERNEL=1 ;;
@@ -1715,6 +1718,17 @@ wsl_font_hint() {
   log "WSL: instale a fonte MesloLGS NF no Windows (4 .ttf em github.com/romkatv/powerlevel10k-media: Regular, Bold, Italic e Bold Italic; clique direito > Instalar) e escolha-a no Windows Terminal: Configurações > a distro > Aparência > Tipo de fonte. Sem isso o prompt do p10k mostra glifos quebrados."
 }
 
+# --mirrors / mirrors.sh: só a etapa de mirrors, sem instalar nem mexer em mais nada (já com FORCE_MIRRORS=1).
+mirrors_only() {
+  if [[ $PM != pacman ]]; then
+    log "mirrors: não há ranking para '$PM' (só pacman e Termux); nada a fazer"
+    return 0
+  fi
+  optimize_mirrors
+  ((DRY_RUN)) && log "Simulação concluída: nada foi alterado."
+  return 0
+}
+
 system_phase() {
   enable_apk_repos     # Alpine/postmarketOS: repositório community, antes de qualquer pacote
   enable_pacman_repos  # Arch e derivadas: core/extra/multilib no pacman.conf, antes de qualquer pacote
@@ -2604,7 +2618,8 @@ main() {
   if [[ $PM == pkg ]]; then
     [[ $EUID -ne 0 ]] || die "Rode como usuário normal no Termux; root não é aceito."
     termux_mirror            # antes de tudo: mirror mais rápido, para o upgrade já baixar dele
-    termux_upgrade           # pkg update + pkg upgrade
+    if ((MIRRORS_ONLY)); then return 0; fi
+    termux_upgrade          # pkg update + pkg upgrade
     termux_repos             # x11-repo, root-repo, tur-repo
     install_packages
     termux_extra_packages    # termux-services, proot-distro
@@ -2623,6 +2638,7 @@ main() {
       [[ $EUID -eq 0 ]] || die "No proot, rode como root (ex.: proot-distro login <distro>); o script cria o usuário $NEW_USER."
       [[ -f $SCRIPT_PATH ]] || die "Salve o script em disco e rode: bash setup.sh"
     fi
+    if ((MIRRORS_ONLY)); then mirrors_only; return 0; fi
     proot_phase
     echo
     print_failed
@@ -2645,6 +2661,8 @@ main() {
   if ((! DRY_RUN)); then
     [[ -f $SCRIPT_PATH ]] || die "Salve o script em disco e rode: bash setup.sh"
   fi
+
+  if ((MIRRORS_ONLY)); then mirrors_only; return 0; fi
 
   if ((REVERT_MC)); then
     revert_minecraft_themes
