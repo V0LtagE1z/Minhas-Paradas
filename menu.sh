@@ -5,6 +5,21 @@
 # shortcut: só funciona a partir do clone (acha os scripts ao lado dele). Para rodar via curl o menu
 # terá de clonar o repo antes e entrar nele; veja "Planejado" no README.
 
+# Checagem do bash. POSIX puro de propósito: o ash do Alpine lê um comando por vez, então chega aqui
+# antes de ver a sintaxe de bash lá embaixo. Com bash instalado, só reexecuta; sem ele, avisa e sai.
+if [ -z "${BASH_VERSION:-}" ]; then
+  if command -v bash >/dev/null 2>&1; then exec bash "$0" "$@"; fi
+  if   command -v apk     >/dev/null 2>&1; then _cmd="apk add bash"
+  elif command -v apt-get >/dev/null 2>&1; then _cmd="apt-get install -y bash"
+  elif command -v dnf     >/dev/null 2>&1; then _cmd="dnf install -y bash"
+  elif command -v zypper  >/dev/null 2>&1; then _cmd="zypper install -y bash"
+  elif command -v pacman  >/dev/null 2>&1; then _cmd="pacman -S --noconfirm bash"
+  else _cmd="(instale o pacote bash com o gerenciador de pacotes da sua distro)"
+  fi
+  printf '[erro] o menu precisa do bash, e ele não está instalado.\n  Instale como root (ou com sudo/doas na frente):\n    %s\n  Depois rode: bash %s\n' "$_cmd" "$0" >&2
+  exit 1
+fi
+
 DIR="${MENU_DIR:-$(dirname "$(readlink -f -- "${BASH_SOURCE[0]}")")}"
 # Lê do terminal (e não do stdin) para continuar funcionando no futuro "curl ... | bash".
 # MENU_TTY existe só para o teste (tests/menu.test.sh) alimentar as respostas.

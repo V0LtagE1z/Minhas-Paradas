@@ -21,5 +21,14 @@ check 'FAKE nvidia.sh install --dry-run'
 check 'FAKE oxwm-setup.sh'
 check 'Opção inválida: x'
 [[ $rc == 0 ]] || { echo "FALHOU: o menu saiu com $rc"; fail=1; }
+# Sem bash: um shell POSIX (dash/ash) com um PATH que só tem um "apk" de mentira deve avisar e mostrar o comando.
+posix=$(command -v dash || command -v ash || true)
+if [[ -z $posix ]]; then echo "pulado: nenhum dash/ash para testar a checagem do bash"
+else
+  mkdir "$tmp/bin"; printf '#!/bin/sh\n' > "$tmp/bin/apk"; chmod +x "$tmp/bin/apk"
+  out=$(PATH="$tmp/bin" "$posix" "$here/../menu.sh" 2>&1); rc=$?
+  check 'apk add bash'
+  [[ $rc == 1 ]] || { echo "FALHOU: sem bash o menu devia sair com 1, saiu com $rc"; fail=1; }
+fi
 ((fail)) && exit 1
 echo "menu.test.sh: ok"
