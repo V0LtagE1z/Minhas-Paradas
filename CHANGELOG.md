@@ -2,7 +2,22 @@
 
 Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto não usa versões, então as entradas são por data.
 
-## Não lançado (branch `termux-proot-x86_64`, em cima da `rate-mirrors-derivadas`)
+## Não lançado (branch `termux-mirror-rapido`, em cima da `termux-proot-x86_64`)
+
+### 2026-11-04
+
+#### Corrigido (Termux)
+
+- **A escolha do mirror era lenta e parecia travar.** `termux_mirror` testava os mirrors um por vez, com até 8 s de espera cada: com vários fora do ar ou lentos a etapa levava minutos. Agora os testes rodam **em paralelo** (`--connect-timeout 3`, `-m 5`), então a etapa leva no máximo ~5 s.
+- O ranking usava `sort -n` no locale do usuário; com `pt_BR` a vírgula decimal ordenava os tempos errado. Agora é `LC_ALL=C sort -n`.
+- Mirrors repetidos (a pasta `mirrors` tem links como `default` apontando para um que já está lá) eram contados duas vezes e ocupavam vagas dos 3 do conjunto; agora são deduplicados pela URL.
+
+#### Decisões e limites
+
+- **Testado:** `bash -n` e a função isolada contra servidores locais (um rápido, um lento, um link duplicado, um recusando conexão), com `LANG=pt_BR.UTF-8`: ~1,6 s no total e ordem correta. **Não testado:** o Termux real (a causa dos travamentos que você viu é inferida do código; se continuar travando, mande a saída do script) nem um mirror que descarta pacotes sem responder (o timeout de 3 s cobre, mas não foi simulado).
+- Continua medindo latência e não banda (veja o README).
+
+## Antes (branch `termux-proot-x86_64`, em cima da `rate-mirrors-derivadas`)
 
 ### 2026-11-04
 
