@@ -2,7 +2,21 @@
 
 Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto não usa versões, então as entradas são por data.
 
-## Não lançado (branch `rate-mirrors-derivadas`)
+## Não lançado (branch `termux-proot-x86_64`, em cima da `rate-mirrors-derivadas`)
+
+### 2026-11-04
+
+#### Adicionado (Termux em x86_64)
+
+- **`termux_proot_distro` por arquitetura.** O `danhunsaker/archlinuxarm` só existe para ARM, então num Termux x86_64 (ex.: celular Android emulado) o `proot-distro install` falhava. Agora, se `uname -m` for `x86_64` (ou `amd64`), o padrão vira a imagem oficial `archlinux:latest` com o nome local `archlinux`; em ARM nada muda (`danhunsaker/archlinuxarm:latest`, `archlinuxarm`). `TERMUX_PROOT_IMAGE` e `TERMUX_PROOT_NAME` continuam mandando.
+- `README.md`: tabela de variáveis e seção de proot atualizadas.
+
+#### Decisões e limites
+
+- **Só x86_64 ganhou imagem própria.** i686 e ARM de 32 bits seguem com a imagem de ARM (comportamento de antes): se o `install` falhar, o script avisa e registra no resumo final.
+- **Testado:** `bash -n` e `--dry-run` simulando o Termux (`TERMUX_VERSION`, `UNAME_M=x86_64` e `aarch64`, e com os dois overrides). **Não testado:** o download e o `login` reais no Termux x86_64, nem se o `setup.sh` dentro do Arch x86_64 do proot é detectado como proot (deve cair no critério do nome do kernel; se não, `FORCE_PROOT=1`).
+
+## Antes (branch `rate-mirrors-derivadas`)
 
 ### 2026-11-04
 

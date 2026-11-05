@@ -159,8 +159,10 @@ DESKTOP_PACKAGES=(kitty fontconfig)
 #   SKIP_TERMUX_UPGRADE=1  pula o update/upgrade completo (só atualiza o índice, com "pkg update");
 #   SKIP_TERMUX_REPOS=1    não habilita os repositórios adicionais;
 #   SKIP_TERMUX_PROOT=1    não instala a distro do proot-distro (o pacote proot-distro continua sendo instalado);
-#   TERMUX_PROOT_IMAGE     imagem OCI que o proot-distro instala (padrão: danhunsaker/archlinuxarm:latest);
-#   TERMUX_PROOT_NAME      nome do container local, o que você usa em "proot-distro login" (padrão: archlinuxarm).
+#   TERMUX_PROOT_IMAGE     imagem OCI que o proot-distro instala (padrão: danhunsaker/archlinuxarm:latest em ARM;
+#                          archlinux:latest, a imagem oficial do Arch, em x86_64);
+#   TERMUX_PROOT_NAME      nome do container local, o que você usa em "proot-distro login" (padrão: archlinuxarm em ARM;
+#                          archlinux em x86_64).
 # O science-repo, o game-repo e o unstable-repo foram incorporados ao repositório principal do Termux
 # (wiki do termux-packages, página Mirrors), então não são mais necessários.
 # O tur-repo (Termux User Repository) NÃO é oficial: o Termux não dá suporte aos pacotes dele.
@@ -171,8 +173,16 @@ SKIP_TERMUX_REPOS="${SKIP_TERMUX_REPOS:-0}"
 TERMUX_REPOS=(x11-repo root-repo tur-repo)
 TERMUX_EXTRA_PACKAGES=(termux-services proot-distro iproute2 strace)
 SKIP_TERMUX_PROOT="${SKIP_TERMUX_PROOT:-0}"
-TERMUX_PROOT_IMAGE="${TERMUX_PROOT_IMAGE:-danhunsaker/archlinuxarm:latest}"
-TERMUX_PROOT_NAME="${TERMUX_PROOT_NAME:-archlinuxarm}"
+# A imagem do danhunsaker só existe para ARM; em x86_64 (ex.: Termux num emulador Android x86_64) o
+# proot-distro usa a imagem oficial archlinux (só amd64). Qualquer outra arquitetura segue com a de ARM.
+# shortcut: só x86_64 tem imagem própria; i686 e afins caem na de ARM e o install falha com aviso.
+case ${UNAME_M:-$(uname -m 2>/dev/null || true)} in
+  x86_64|amd64) _proot_img=archlinux:latest;                _proot_name=archlinux ;;
+  *)            _proot_img=danhunsaker/archlinuxarm:latest; _proot_name=archlinuxarm ;;
+esac
+TERMUX_PROOT_IMAGE="${TERMUX_PROOT_IMAGE:-$_proot_img}"
+TERMUX_PROOT_NAME="${TERMUX_PROOT_NAME:-$_proot_name}"
+unset _proot_img _proot_name
 
 # Estrutura do repo: cada ambiente tem a sua subpasta com os próprios dotfiles.
 DIR_TERMUX="Termux"
@@ -322,9 +332,9 @@ No fim o script pergunta se você quer encerrar a sessão (fecha o shell que cha
 
 Variáveis úteis: NEW_USER (padrão: gustavo), REPO_URL, REPO_DIR,
                  FORCE_PROOT=1 (força o modo proot se a detecção falhar),
-                 SKIP_TERMUX_PROOT=1 (Termux: não instala o Arch Linux ARM no proot-distro),
-                 TERMUX_PROOT_IMAGE (Termux: imagem do proot-distro; padrão danhunsaker/archlinuxarm:latest),
-                 TERMUX_PROOT_NAME (Termux: nome do container; padrão archlinuxarm),
+                 SKIP_TERMUX_PROOT=1 (Termux: não instala o Arch no proot-distro),
+                 TERMUX_PROOT_IMAGE (Termux: imagem do proot-distro; padrão danhunsaker/archlinuxarm:latest em ARM, archlinux:latest em x86_64),
+                 TERMUX_PROOT_NAME (Termux: nome do container; padrão archlinuxarm em ARM, archlinux em x86_64),
                  SKIP_LOCALES=1 (não gera os locales nem escreve o locale.conf; desktop e WSL),
                  FORCE_WSL=1 (força o modo WSL) ou FORCE_WSL=0 (desliga a detecção de WSL),
                  WSL_SET_DEFAULT_USER=0 (no WSL, não define $NEW_USER como usuário padrão no wsl.conf),
@@ -752,7 +762,7 @@ termux_extra_packages() {
   return 0
 }
 
-# Instala a imagem do Arch Linux ARM no proot-distro (o proot-distro vem em TERMUX_EXTRA_PACKAGES).
+# Instala o Arch no proot-distro: Arch Linux ARM em ARM, Arch oficial em x86_64 (o proot-distro vem em TERMUX_EXTRA_PACKAGES).
 # O proot-distro atual aceita uma referência de imagem OCI (usuário/imagem:tag) e --name para o nome local.
 # shortcut: "já instalado" = o nome aparece em "proot-distro list"; mude se o formato da listagem mudar.
 termux_proot_distro() {
@@ -2591,7 +2601,7 @@ main() {
     termux_repos             # x11-repo, root-repo, tur-repo
     install_packages
     termux_extra_packages    # termux-services, proot-distro
-    termux_proot_distro      # Arch Linux ARM (danhunsaker) no proot-distro
+    termux_proot_distro      # Arch Linux ARM (danhunsaker) ou Arch x86_64 (oficial) no proot-distro
     run_user_steps
     echo
     print_failed

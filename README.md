@@ -100,7 +100,7 @@ Variáveis de ambiente (valor padrão em negrito, quando existe):
 | `MC_THEMES` (**ask**) | `1`, `0` ou `ask`, o mesmo que as opções dos temas |
 | `SKIP_TERMUX_MIRROR=1`, `TERMUX_MIRROR_COUNT` (**3**) | Termux: não mexer no mirror (mantém o do `termux-change-repo`); quantos dos mirrors mais rápidos ficam no conjunto |
 | `SKIP_TERMUX_UPGRADE=1`, `SKIP_TERMUX_REPOS=1` | Termux: não rodar o `pkg upgrade` completo (só atualiza o índice); não habilitar `x11-repo`, `root-repo` e `tur-repo` |
-| `SKIP_TERMUX_PROOT=1`, `TERMUX_PROOT_IMAGE` (**danhunsaker/archlinuxarm:latest**), `TERMUX_PROOT_NAME` (**archlinuxarm**) | Termux: não instalar o Arch Linux ARM no `proot-distro` (o pacote `proot-distro` continua sendo instalado); imagem que o `proot-distro install` baixa; nome local do container (o de `proot-distro login`) |
+| `SKIP_TERMUX_PROOT=1`, `TERMUX_PROOT_IMAGE` (**danhunsaker/archlinuxarm:latest** em ARM, **archlinux:latest** em x86_64), `TERMUX_PROOT_NAME` (**archlinuxarm** em ARM, **archlinux** em x86_64) | Termux: não instalar o Arch no `proot-distro` (o pacote `proot-distro` continua sendo instalado); imagem que o `proot-distro install` baixa; nome local do container (o de `proot-distro login`). O Termux em x86_64 (ex.: emulador Android) usa a imagem oficial do Arch, porque a do danhunsaker só existe para ARM |
 | `SKIP_APK_REPOS=1`, `FORCE_APK=1`, `FORCE_LIBC`, `FORCE_INIT` | Alpine: não habilitar o `community`; aceitar `apk` em Wolfi/Chimera; trocar a detecção de libc e de init |
 
 Outras variáveis (`OS_RELEASE_FILE`, `PACMAN_CONF`, `ROOT_PREFIX`, `KERNEL_RELEASE`, `APK_REPOS_FILE`...) só servem para testar o script contra arquivos de exemplo.
@@ -162,6 +162,8 @@ O script detecta sozinho quando está dentro de um proot, em qualquer distro com
 
 1. O nome do kernel traz `proot`. O proot-distro devolve algo como `6.17.0-PRoot-Distro` em `uname -r`, o mesmo nome que aparece no `fastfetch`.
 2. Só no Arch Linux ARM: `ID=archarm` em `/etc/os-release` (ou `/etc/arch-release` em CPU ARM) e processo rastreado por ptrace.
+
+O Arch x86_64 instalado pelo Termux em x86_64 cai no critério 1 (nome do kernel); se não for detectado, use `FORCE_PROOT=1`.
 
 Se a detecção falhar, force com `FORCE_PROOT=1 bash setup.sh`. Rode como root (o `proot-distro login <distro>` já entra como root). Nesse modo o script:
 
