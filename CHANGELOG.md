@@ -20,6 +20,7 @@ Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep 
 - `tests/dotfiles.test.sh`: `curl` de mentira que serve os arquivos da pasta do repo; confere as URLs (com `%20`), que só os arquivos do ambiente são baixados, backup `.bak` e `.bak.1`, `DOTFILES_REF`, download que falha, simulação sem escrita, recusa de root e queda no clone.
 - `tests/menu.test.sh`: a rota remota agora confere que nada é baixado ao abrir, que só o script escolhido (e suas dependências) é baixado, uma vez só, com o ref certo, que `DOTFILES_REF` chega ao script, que o download que falha não derruba o menu e o erro sem `curl`/`wget`. Os índices dos itens mudaram (o item novo é o terceiro).
 - `README.md`: seção "Só os dotfiles", opções e variáveis novas, menu, "Rodar sem clonar", mirrors, simulação e limitações.
+- `README.md`, "Como usar": agora começa por um "Uso rápido" (`git clone` + `bash setup.sh`, e o `curl ... | bash` do menu) e deixa as opções extras (`--dry-run`, `--dotfiles`, `--mirrors`, `--clonar-repo`) numa subseção "Opções adicionais" logo abaixo.
 
 #### Decisões e limites
 

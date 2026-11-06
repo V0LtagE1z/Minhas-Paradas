@@ -36,7 +36,9 @@ Arquivos de cada pasta:
 
 ## Como usar
 
-Em uma máquina nova, baixe e rode o script:
+### Uso rápido
+
+Em uma máquina nova, clone e rode o setup:
 
 ```
 git clone https://github.com/V0LtagE1z/Minhas-Paradas.git
@@ -44,7 +46,13 @@ cd Minhas-Paradas
 bash setup.sh
 ```
 
-Como rodar depende do ambiente:
+Ou, sem clonar nada, abra o menu e escolha o que rodar (ele baixa só o script do item escolhido):
+
+```
+curl -fsSL https://raw.githubusercontent.com/V0LtagE1z/Minhas-Paradas/main/menu.sh | bash
+```
+
+Já com o repo clonado, `bash menu.sh` abre o mesmo menu. Como rodar o `setup.sh` depende do ambiente:
 
 | Ambiente | Como rodar | O que acontece |
 | -------- | ---------- | -------------- |
@@ -54,9 +62,21 @@ Como rodar depende do ambiente:
 | WSL | Como root ou com `sudo`, dentro da distro (o script detecta o ambiente) | Igual às distros de desktop, sem bootloader, temas, Kitty e fonte, e com login automático no `gustavo` (veja a seção do WSL) |
 | Distro em proot (qualquer uma) | Como root (o script detecta o ambiente) | Cria o usuário `gustavo` com `sudo` (se o proot permitir; o script testa) e aplica o setup nele e no root (veja abaixo) |
 
-O script precisa estar salvo em arquivo (`git clone` e `bash setup.sh`). Rodar via `curl ... | bash` não funciona nas distros, porque a segunda fase reexecuta o próprio arquivo. Para escolher o que rodar por um menu, use `bash menu.sh` (veja "Menu"). O `menu.sh` roda também sem clonar, por `curl ... | bash` (veja "Rodar sem clonar"): ele baixa só o script do item escolhido para uma pasta temporária e chama-o de lá, já que é um arquivo de verdade.
+### Opções adicionais
 
-Para ver tudo o que seria feito sem alterar nada, use `bash setup.sh --dry-run`.
+Só se precisar:
+
+```
+bash setup.sh --dry-run                # mostra o que seria feito, sem alterar nada
+bash setup.sh --dotfiles               # só atualiza os dotfiles (veja "Só os dotfiles")
+bash setup.sh --mirrors                # só ranqueia os mirrors de novo (veja "Ranquear os mirrors de novo")
+bash setup.sh --clonar-repo            # pega os dotfiles clonando o repo em ~/Minhas-Paradas
+bash setup.sh --help                   # lista todas as opções (veja "Opções e variáveis")
+```
+
+- **O `setup.sh` precisa estar salvo em arquivo.** Rodar o `setup.sh` por `curl ... | bash` não funciona nas distros, porque a segunda fase reexecuta o próprio arquivo. Quem roda sem clonar é o `menu.sh`: ele baixa o `setup.sh` para uma pasta temporária e chama-o de lá (veja "Rodar sem clonar").
+- **Fixar uma versão** (um commit ou tag no lugar da `main`) no menu sem clone: veja "Rodar sem clonar".
+- Os dotfiles não exigem clonar o repo: o `setup.sh` baixa só os arquivos de que precisa (veja "O que o script faz", etapa 6).
 
 ## Gerenciadores e ambientes
 
