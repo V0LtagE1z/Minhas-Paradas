@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# menu.sh — menu de linha de comando do Minhas-Paradas: você escolhe o que rodar, ele executa o
-# script certo e volta para esta tela. Também reinicia, desliga e fecha o terminal.
+# menu.sh — TUI do Minhas-Paradas: ↑/↓ (ou j/k) escolhem, Enter roda o script certo como processo filho e
+# volta para esta tela. Ações que alteram o sistema pedem "Tem certeza?". Também reinicia, desliga (não no
+# Termux nem no proot: lá o item some) e fecha o terminal.
 # Uso: bash menu.sh   (como usuário normal: os scripts pedem sudo sozinhos; o nvidia.sh recusa root)
 # shortcut: só funciona a partir do clone (acha os scripts ao lado dele). Para rodar via curl o menu
 # terá de clonar o repo antes e entrar nele; veja "Planejado" no README.
+# shortcut: assume terminal UTF-8 (bordas e ❯); o console do Linux sem fonte unicode mostra lixo. Upgrade: borda ASCII.
 
 # Checagem do bash. POSIX puro de propósito: o ash do Alpine lê um comando por vez, então chega aqui
 # antes de ver a sintaxe de bash lá embaixo. Com bash instalado, só reexecuta; sem ele, avisa e sai.
@@ -21,13 +23,30 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 
 DIR="${MENU_DIR:-$(dirname "$(readlink -f -- "${BASH_SOURCE[0]}")")}"
-# Lê do terminal (e não do stdin) para continuar funcionando no futuro "curl ... | bash".
-# MENU_TTY existe só para o teste (tests/menu.test.sh) alimentar as respostas.
+# Lê as teclas do terminal (e não do stdin) para continuar funcionando no futuro "curl ... | bash".
+# MENU_TTY existe só para o teste (tests/menu.test.sh) alimentar as teclas.
 { exec 3<"${MENU_TTY:-/dev/tty}"; } 2>/dev/null || { echo "[erro] o menu precisa de um terminal" >&2; exit 1; }
 
-ask() { local a=""; printf '%s' "$1"; read -r -u 3 a || exit 0; REPLY=$a; }   # fim da entrada = sair
-yes_no() { ask "$1 [s/N] "; [[ ${REPLY,,} == s || ${REPLY,,} == sim ]]; }
+# Sem locale UTF-8 (rootfs mínimo de proot) o bash conta bytes e as bordas desalinham com acentos.
+case ${LC_ALL:-${LC_CTYPE:-${LANG:-}}} in *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) ;; *) LC_ALL=C.UTF-8 ;; esac
 
+# Cores (salmão/laranja). Terminal "dumb" ou NO_COLOR: sem cor e sem limpar a tela.
+if [[ -n ${NO_COLOR:-} || ${TERM:-dumb} == dumb ]]; then CLS="" HIDE="" SHOW="" ACC="" REV="" OFF=""
+else CLS=$'\e[H\e[2J' HIDE=$'\e[?25l' SHOW=$'\e[?25h' ACC=$'\e[38;5;209m' REV=$'\e[7m' OFF=$'\e[0m'; fi
+trap 'printf "%s" "$SHOW"' EXIT
+
+# ─── Ambiente ─────────────────────────────────────────────────────────────────
+# KERNEL_RELEASE e FORCE_PROOT são os mesmos nomes do setup.sh (aqui também servem ao teste).
+is_wsl() { local k=${KERNEL_RELEASE:-$(uname -r)}; [[ ${k,,} == *microsoft* || ${k,,} == *wsl* ]]; }
+
+no_power() {  # Termux e proot não têm o que reiniciar/desligar: os itens somem do menu
+  local k=${KERNEL_RELEASE:-$(uname -r)}
+  [[ ${PREFIX:-} == *com.termux* || ${FORCE_PROOT:-} == 1 || ${k,,} == *proot* ]] && return 0
+  # no proot o processo é rastreado por ptrace; sob strace/gdb isto também dá "sim" (só esconde os itens)
+  [[ ${FORCE_PROOT:-} != 0 ]] && grep -qs '^TracerPid:[[:space:]]*[1-9]' "/proc/$$/status"
+}
+
+# ─── Ações ────────────────────────────────────────────────────────────────────
 run_script() {  # script [args...] — roda como filho: um die/exit do script não derruba o menu
   local s=$1 rc; shift
   [[ -f $DIR/$s ]] || { echo "[erro] não achei $DIR/$s"; return; }
@@ -35,18 +54,15 @@ run_script() {  # script [args...] — roda como filho: um die/exit do script n�
   echo; echo "[menu] $s terminou (código $rc)."
 }
 
-power() {  # reboot|poweroff  verbo-no-infinitivo
-  if [[ ${PREFIX:-} == *com.termux* ]]; then echo "[!!] O Termux não consegue $2 o aparelho."; return; fi
-  local k=${KERNEL_RELEASE:-$(uname -r)}   # mesma detecção do setup.sh; KERNEL_RELEASE existe para o teste
-  if [[ ${k,,} == *microsoft* || ${k,,} == *wsl* ]]; then   # reboot/poweroff aqui não fazem nada: quem manda na distro é o Windows
+power() {  # reboot|poweroff  verbo — o menu já perguntou "Tem certeza?"
+  if is_wsl; then   # reboot/poweroff aqui não fazem nada: quem manda na distro é o Windows
     echo "[!!] No WSL não dá para $2 por aqui. No Windows (PowerShell ou CMD) rode: wsl --shutdown"
     echo "     (isso para todas as distros WSL; depois é só abrir a distro de novo)"
     return
   fi
-  yes_no "Confirma $2 agora?" || return 0
   local su=""
   ((EUID)) && su=$(command -v sudo || command -v doas)   # doas: Alpine sem sudo
-  $su "$1" || echo "[!!] não consegui $2 (em proot/container isso não existe)."
+  $su "$1" || echo "[!!] não consegui $2 (em container isso não existe)."
 }
 
 close_terminal() {
@@ -57,39 +73,104 @@ close_terminal() {
   esac
 }
 
-while :; do
-  clear 2>/dev/null
-  cat <<'EOF'
- Minhas-Paradas
+pause() { printf '\nEnter para voltar ao menu... '; read -r -u 3 _ || exit 0; }
 
-  1) Setup completo (usuário, zsh, p10k, dotfiles)
-  2) Setup — só simular (--dry-run, não altera nada)
-  3) Ranquear os mirrors (no Arch e derivadas, atualiza o sistema)
-  4) Reverter os temas Minecraft (GRUB + Plymouth)
-  5) NVIDIA — detectar GPU e ambiente (só leitura)
-  6) NVIDIA — instalar o driver
-  7) NVIDIA — simular a instalação (--dry-run)
-  8) OXWM — instalar a configuração
+# ─── Itens: rótulo | descrição (2 linhas separadas por "|") | "Tem certeza que deseja <isto>?" (vazio = sem pergunta) | comando
+LBL=(); DESC=(); CONF=(); CMD=()
+add() { LBL+=("$1"); DESC+=("$2"); CONF+=("$3"); CMD+=("$4"); }
 
-  r) Reiniciar     d) Desligar
-  e) Fechar este terminal     q) Sair do menu
+add "Setup completo"           "Usuário, zsh, p10k e dotfiles|Pede sudo; altera o sistema"    "rodar o setup completo"       "run_script setup.sh --sem-encerrar"
+add "Setup (só simular)"       "Mostra o que o setup faria|(--dry-run); nada é alterado"      ""                             "run_script setup.sh --dry-run --sem-encerrar"
+add "Ranquear os mirrors"      "Ranqueia os mirrors; no Arch|também atualiza o sistema"       "ranquear os mirrors"          "run_script mirrors.sh"
+add "Reverter temas Minecraft" "Desfaz os temas Minecraft|(GRUB + Plymouth)"                  "reverter os temas Minecraft"  "run_script setup.sh --reverter-temas"
+add "NVIDIA: detectar GPU"     "Detecta a GPU e o ambiente|(só leitura)"                      ""                             "run_script nvidia.sh"
+add "NVIDIA: instalar driver"  "Instala o driver NVIDIA|(Arch real; demais: dry-run)"         "instalar o driver NVIDIA"     "run_script nvidia.sh install"
+add "NVIDIA: simular instalação" "Mostra o plano da instalação|sem alterar nada"              ""                             "run_script nvidia.sh install --dry-run"
+add "OXWM: instalar configuração" "Instala a configuração do OXWM|(X11; Arch e derivadas)"    "instalar a config. do OXWM"   "run_script oxwm-setup.sh"
+NINST=${#LBL[@]}
+if ! no_power; then
+  is_wsl && { c_reb=""; c_off=""; } || { c_reb="reiniciar o computador"; c_off="desligar o computador"; }   # no WSL só aparece o aviso
+  add "Reiniciar" "Reinicia o computador|(pede sudo ou doas)" "$c_reb" "power reboot reiniciar"
+  add "Desligar"  "Desliga o computador|(pede sudo ou doas)"  "$c_off" "power poweroff desligar"
+fi
+add "Fechar este terminal" "Fecha este terminal|(SIGHUP no shell que chamou)" "fechar este terminal" close_terminal
+add "Sair do menu"         "Sai só do menu|o terminal continua aberto"        ""                      "exit 0"
+N=${#LBL[@]}
 
-EOF
-  ask 'Escolha: '
-  case ${REPLY,,} in
-    1) run_script setup.sh --sem-encerrar ;;
-    2) run_script setup.sh --dry-run --sem-encerrar ;;
-    3) run_script mirrors.sh ;;
-    4) run_script setup.sh --reverter-temas ;;
-    5) run_script nvidia.sh ;;
-    6) run_script nvidia.sh install ;;
-    7) run_script nvidia.sh install --dry-run ;;
-    8) run_script oxwm-setup.sh ;;
-    r) power reboot reiniciar ;;
-    d) power poweroff desligar ;;
-    e) close_terminal ;;
-    q|0) exit 0 ;;
-    *) echo "Opção inválida: $REPLY" ;;
+# ─── Desenho ──────────────────────────────────────────────────────────────────
+box_top() {  # título — W é a largura da caixa
+  local t=" $1 " d; printf -v d '%*s' $((W - 3 - ${#t})) ''
+  printf '%s╭─%s%s╮%s\n' "$ACC" "$t" "${d// /─}" "$OFF"
+}
+box_bottom() { local d; printf -v d '%*s' $((W - 2)) ''; printf '%s╰%s╯%s\n' "$ACC" "${d// /─}" "$OFF"; }
+box_row() {  # texto [1 = selecionado]
+  local t=$1 m="  " st="" en="" pad
+  ((${#t} > W - 6)) && t="${t:0:W-7}…"
+  if [[ ${2:-} == 1 ]]; then m="${ACC}❯${OFF} "; st=$REV; en=$OFF; fi
+  printf -v pad '%*s' $((W - 6 - ${#t})) ''
+  printf '%s│%s %s%s%s%s%s %s│%s\n' "$ACC" "$OFF" "$m" "$st" "$t" "$pad" "$en" "$ACC" "$OFF"
+}
+
+draw() {
+  local i d1 d2
+  read -r _ W < <(stty size <&3 2>/dev/null)   # largura do terminal; sem tty (teste) cai nos 60
+  [[ $W =~ ^[0-9]+$ ]] || W=60
+  ((W > 72)) && W=72; ((W < 36)) && W=36
+  printf '%s%s' "$CLS" "$HIDE"
+  box_top "Minhas-Paradas"
+  for ((i = 0; i < NINST; i++)); do box_row "${LBL[i]}" $((i == sel)); done
+  box_bottom
+  box_top "Sistema"
+  for ((i = NINST; i < N; i++)); do box_row "${LBL[i]}" $((i == sel)); done
+  box_bottom
+  d1=${DESC[sel]%%|*}; d2=${DESC[sel]#*|}
+  box_top "Descrição"; box_row "$d1"; box_row "$d2"; box_bottom
+  printf ' ↑↓ mover   Enter escolher   q sair\n'
+}
+
+key() {  # lê uma tecla do terminal (fd 3) → KEY: up down left right enter esc, ou o próprio caractere
+  local k r=""
+  IFS= read -rsn1 -u 3 k || exit 0   # fim da entrada = sair
+  case $k in
+    $'\e')
+      IFS= read -rsn2 -t 0.05 -u 3 r   # setas chegam como ESC [ A; um ESC sozinho não traz mais nada
+      case $r in '[A'|OA) KEY=up ;; '[B'|OB) KEY=down ;; '[C'|OC) KEY=right ;; '[D'|OD) KEY=left ;; '') KEY=esc ;; *) KEY=other ;; esac ;;
+    '') KEY=enter ;;
+    *) KEY=$k ;;
   esac
-  ask $'\nEnter para voltar ao menu... '
+}
+
+confirm() {  # ação — "Tem certeza que deseja <ação>?"; o padrão é Não
+  local yes=0 a b
+  while :; do
+    printf '%s%s' "$CLS" "$HIDE"
+    if ((yes)); then a="[ Sim ]"; b="  Não  "; else a="  Sim  "; b="[ Não ]"; fi
+    box_top "Confirmar"; box_row ""; box_row "Tem certeza que deseja"; box_row "$1?"; box_row ""
+    box_row "$a    $b"; box_bottom
+    printf ' ←→ escolher  Enter ok  Esc cancela\n'
+    key
+    case $KEY in
+      left|right|h|l|$'\t') yes=$((1 - yes)) ;;
+      s|S|y|Y) return 0 ;;
+      n|N|q|esc) return 1 ;;
+      enter) return $((1 - yes)) ;;
+    esac
+  done
+}
+
+# ─── Laço principal ───────────────────────────────────────────────────────────
+sel=0
+while :; do
+  draw
+  key
+  case $KEY in
+    up|k)   sel=$(((sel + N - 1) % N)) ;;
+    down|j) sel=$(((sel + 1) % N)) ;;
+    enter|' ')
+      [[ -z ${CONF[sel]} ]] || confirm "${CONF[sel]}" || continue
+      printf '%s%s' "$CLS" "$SHOW"
+      ${CMD[sel]}
+      pause ;;
+    q) exit 0 ;;
+  esac
 done

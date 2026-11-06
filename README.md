@@ -10,8 +10,8 @@ Meus dotfiles de terminal em um script que monta tudo em uma máquina nova, seja
 | ------- | -------------- |
 | `setup.sh` | O script principal: cria o usuário `gustavo`, instala pacotes, locales, oh-my-zsh, powerlevel10k, plugins, Kitty e fontes e aplica os dotfiles. Funciona em distros de desktop, WSL, proot e Termux (veja "Gerenciadores e ambientes") |
 | `mirrors.sh` | Ranqueia os mirrors de novo, quando você quiser, sem refazer o resto. É só um atalho para `bash setup.sh --mirrors` (veja "Ranquear os mirrors de novo") |
-| `menu.sh` | Menu de linha de comando: escolhe o que rodar (setup, mirrors, NVIDIA, OXWM), executa o script e volta ao menu; também reinicia, desliga e fecha o terminal (veja "Menu") |
-| `tests/menu.test.sh` | Teste do `menu.sh` com scripts de mentira; não altera o sistema |
+| `menu.sh` | Menu em tela cheia (TUI): escolhe o que rodar (setup, mirrors, NVIDIA, OXWM), pede "Tem certeza", executa o script e volta ao menu; também reinicia, desliga (não no Termux nem no proot) e fecha o terminal (veja "Menu") |
+| `tests/menu.test.sh` | Teste do `menu.sh` com scripts de mentira e teclas lidas de um arquivo; não altera o sistema |
 | `nvidia.sh` | Detecta a GPU NVIDIA e instala o driver (open, proprietário ou legado), com modeset, initramfs e PRIME. É independente do `setup.sh` (veja "nvidia.sh") |
 | `oxwm-setup.sh` e `config.lua` | Instalam a configuração do OXWM (gerenciador de janelas X11), migrada do Caelestia/Hyprland (veja "OXWM") |
 | `OXWM/` | Só uma nota (`MIMLeia.md`) sobre mover o `config.lua` para dentro dela |
@@ -162,22 +162,34 @@ No `--dry-run`, com o `apk` instalado, o script roda `apk add --simulate` em cad
 bash menu.sh
 ```
 
-Uma tela com as opções; cada uma roda o script certo **como processo filho** e, quando ele termina (ou falha), mostra o código de saída e volta para a tela inicial.
+Um menu em tela cheia (TUI, em bash puro, sem instalar nada): caixas de bordas arredondadas, seleção destacada e confirmação antes do que altera o sistema. Cada item roda o script certo **como processo filho** e, quando ele termina (ou falha), mostra o código de saída e volta para a tela inicial.
 
-| Opção | O que roda |
-| ----- | ---------- |
-| 1 | `setup.sh --sem-encerrar` |
-| 2 | `setup.sh --dry-run --sem-encerrar` (só simula) |
-| 3 | `mirrors.sh` |
-| 4 | `setup.sh --reverter-temas` |
-| 5, 6, 7 | `nvidia.sh` (detecção), `nvidia.sh install`, `nvidia.sh install --dry-run` |
-| 8 | `oxwm-setup.sh` |
-| `r`, `d` | Reiniciar e desligar (pedem confirmação; usam `sudo` ou `doas`). No Termux avisa que não dá; no WSL não faz nada e mostra o comando certo (`wsl --shutdown`, rodado no Windows); em proot/container o comando falha e o menu avisa |
-| `e` | Fecha o terminal atual: manda SIGHUP ao shell que chamou o menu. Se o menu foi chamado por `sudo`, não acha o shell com segurança e pede para você digitar `exit` |
-| `q` | Sai só do menu |
+| Tecla | O que faz |
+| ----- | --------- |
+| `↑` `↓` (ou `k` `j`) | Move a seleção; dá a volta nas pontas |
+| `Enter` | Executa o item selecionado |
+| `q` | Sai do menu |
 
+| Item | O que roda | "Tem certeza"? |
+| ---- | ---------- | -------------- |
+| Setup completo | `setup.sh --sem-encerrar` | sim |
+| Setup (só simular) | `setup.sh --dry-run --sem-encerrar` | não |
+| Ranquear os mirrors | `mirrors.sh` (no Arch e derivadas atualiza o sistema inteiro) | sim |
+| Reverter temas Minecraft | `setup.sh --reverter-temas` | sim |
+| NVIDIA: detectar GPU | `nvidia.sh` (só leitura) | não |
+| NVIDIA: instalar driver | `nvidia.sh install` | sim |
+| NVIDIA: simular instalação | `nvidia.sh install --dry-run` | não |
+| OXWM: instalar configuração | `oxwm-setup.sh` | sim |
+| Reiniciar, Desligar | `reboot`, `poweroff` (com `sudo` ou `doas`) | sim (no WSL, não: veja abaixo) |
+| Fechar este terminal | Manda SIGHUP ao shell que chamou o menu. Se o menu foi chamado por `sudo`, não acha o shell com segurança e pede para você digitar `exit` | sim |
+| Sair do menu | Sai só do menu; o terminal continua aberto | não |
+
+- **"Tem certeza que deseja (ação)?"** Aparece um diálogo com os botões `Sim` e `Não`. O padrão é **Não**: `Enter` direto cancela. `←` `→` trocam o botão; `s` confirma; `n`, `q` e `Esc` cancelam. Simulações e a detecção da NVIDIA não perguntam. O `nvidia.sh install` pergunta de novo por conta própria.
+- **Termux e proot: Reiniciar e Desligar não aparecem**, porque lá não há o que reiniciar. O menu detecta pelo `PREFIX` do Termux, pelo kernel com `proot` no nome ou por o processo estar sob ptrace (que é o proot; um `strace`/`gdb` também esconde os itens). `FORCE_PROOT=1` força o modo proot, e `FORCE_PROOT=0` desliga a detecção por ptrace (mesmos nomes do `setup.sh`).
+- **WSL:** Reiniciar e Desligar aparecem, mas não fazem nada: mostram o comando certo, `wsl --shutdown`, para rodar no Windows (PowerShell ou CMD). Isso para todas as distros WSL; depois é só abrir a distro de novo.
+- **Visual:** a largura segue o terminal (de 36 a 72 colunas, então cabe no Termux em pé). `NO_COLOR=1` ou `TERM=dumb` desligam as cores e a limpeza de tela. O menu assume terminal UTF-8 (bordas e `❯`); o console do Linux sem fonte unicode mostra as bordas quebradas. Num sistema sem locale UTF-8 (rootfs mínimo) ele usa `C.UTF-8` só para contar as colunas direito.
 - **O menu escolhe o script, não cada etapa dentro dele.** O `setup.sh` continua sendo um bloco só (pacotes, usuário, dotfiles...); quem quiser pular partes usa as opções e variáveis dele (`--help`).
-- **`--sem-encerrar`:** o `setup.sh` normalmente pergunta no fim "Deseja encerrar a sessão?" e fecha o shell que o chamou. Sob o menu esse shell seria o próprio menu, então a opção 1 passa `--sem-encerrar` e a pergunta some; use `e` quando quiser fechar o terminal.
+- **`--sem-encerrar`:** o `setup.sh` normalmente pergunta no fim "Deseja encerrar a sessão?" e fecha o shell que o chamou. Sob o menu esse shell seria o próprio menu, então o item de setup passa `--sem-encerrar` e a pergunta some; use "Fechar este terminal" quando quiser fechar o terminal.
 - **Precisa do bash.** Sem ele (Alpine, por exemplo) o menu avisa e mostra o comando de instalação do gerenciador que achar (`apk add bash`, `apt-get install -y bash`...), para rodar como root; depois é só `bash menu.sh`. Com o bash instalado, `sh menu.sh` já reexecuta sozinho em bash.
 - **Rode como usuário normal.** O `setup.sh` e o `oxwm-setup.sh` pedem `sudo` sozinhos; o `nvidia.sh` recusa root.
 - **Teste:** `bash tests/menu.test.sh` (scripts de mentira, respostas por arquivo).

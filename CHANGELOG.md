@@ -8,12 +8,14 @@ Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep 
 
 #### Adicionado
 
-- **`menu.sh`: menu de linha de comando.** Mostra as opções (setup, simulação, mirrors, reverter temas Minecraft, NVIDIA detectar/instalar/simular, OXWM), roda o script escolhido como processo filho e **volta sempre à tela inicial**, mostrando o código de saída. Também tem reiniciar, desligar (com confirmação; `sudo` ou `doas`) e fechar o terminal atual (SIGHUP no shell que chamou o menu). Lê as respostas de `/dev/tty`.
+- **`menu.sh`: menu em tela cheia (TUI), em bash puro.** Caixas de bordas arredondadas ("Minhas-Paradas", "Sistema", "Descrição"), seleção destacada com `❯`, cor salmão, navegação por `↑`/`↓` (ou `k`/`j`) e `Enter`; `q` sai. Cada item roda o script escolhido como processo filho e **volta sempre à tela inicial**, mostrando o código de saída. Itens: setup, simulação, mirrors, reverter temas Minecraft, NVIDIA detectar/instalar/simular, OXWM, reiniciar, desligar, fechar o terminal atual (SIGHUP no shell que chamou o menu) e sair. Sem dependência nova (nada de `dialog`/`whiptail`/`gum`: tem de funcionar no Termux e no Alpine). A largura segue o terminal (36 a 72 colunas, cabe no Termux em pé). Lê as teclas de `/dev/tty`. As teclas de letra do menu antigo (`1` a `8`, `r`, `d`, `e`) deixaram de existir.
+- **"Tem certeza que deseja <ação>?"** Diálogo com botões `Sim`/`Não` (`←`/`→`, `Enter`; `s`/`y` confirma; `n`, `q` e `Esc` cancelam). **O padrão é Não**, então `Enter` direto cancela. Vale para os itens que alteram o sistema (setup, mirrors, reverter temas, instalar NVIDIA, instalar OXWM, reiniciar, desligar, fechar o terminal); simulações e a detecção da NVIDIA não perguntam.
+- **Termux e proot: Reiniciar e Desligar somem do menu.** Detecção: `PREFIX` do Termux, kernel com `proot` no nome, ou processo rastreado por ptrace (`TracerPid`); `FORCE_PROOT=1` força, `FORCE_PROOT=0` desliga a parte do ptrace (mesmos nomes do `setup.sh`).
 - **`setup.sh --sem-encerrar`.** Não pergunta "Deseja encerrar a sessão?" no fim. Necessário porque a pergunta fecha o primeiro shell acima do script, que sob o menu seria o próprio menu. O menu usa a flag na opção de setup; fora do menu nada muda.
 - **`menu.sh` checa o bash.** O começo é POSIX puro (o ash do Alpine só lê a sintaxe de bash depois): se houver bash, reexecuta; se não houver, avisa e mostra o comando de instalação (apk, apt-get, dnf, zypper ou pacman) e sai com código 1. Teste novo em `tests/menu.test.sh` (dash com um PATH sem bash).
-- **`menu.sh`: `r` e `d` no WSL.** Reiniciar/desligar por dentro do WSL não faz nada útil, então no WSL (kernel com `microsoft` ou `wsl`, a mesma detecção do `setup.sh`) o menu não pede confirmação nem chama `reboot`/`poweroff`: mostra para rodar `wsl --shutdown` no Windows. Teste novo em `tests/menu.test.sh`. No proot continua só o aviso de erro quando o comando falha.
-- `tests/menu.test.sh`: roda o menu com scripts de mentira e confere a flag, o código de saída de um filho que falha, a opção inválida e a recusa do reinício.
-- `README.md`: seção "Menu" e linhas na tabela de arquivos.
+- **`menu.sh`: Reiniciar e Desligar no WSL.** Reiniciar/desligar por dentro do WSL não faz nada útil, então no WSL (kernel com `microsoft` ou `wsl`, a mesma detecção do `setup.sh`) os itens ficam, mas sem a pergunta e sem chamar `reboot`/`poweroff`: mostram para rodar `wsl --shutdown` no Windows.
+- `tests/menu.test.sh`: roda o menu com scripts de mentira e teclas lidas de um arquivo, com `reboot`, `poweroff` e `sudo` de mentira no PATH (nunca reinicia a máquina). Confere: a flag `--sem-encerrar`; o código de saída de um filho que falha; o "Tem certeza" (padrão Não, `Esc`, setas, `Sim` chamando o `reboot` de mentira); itens ocultos no Termux/proot (3 formas de detectar) e o aviso do WSL; a largura igual de todas as linhas das caixas (rótulos com acento); e a checagem do bash.
+- `README.md`: seção "Menu" (teclas, itens, confirmação, onde somem Reiniciar/Desligar) e linhas na tabela de arquivos.
 
 #### Planejado (não implementado)
 
@@ -23,7 +25,8 @@ Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep 
 
 - **O menu escolhe o script, não cada etapa.** O `setup.sh` é um bloco só; dividir em etapas escolhíveis exigiria mexer em ~2700 linhas e não foi feito.
 - **Não há opção "só instalar os temas Minecraft":** `--temas-minecraft` só responde a pergunta e o resto do setup roda junto. Só a reversão existe como item.
-- **Testado:** `bash -n`, `tests/menu.test.sh` e `setup.sh --dry-run --sem-encerrar` num Debian de teste. **Não testado:** reiniciar, desligar e fechar o terminal de verdade; o menu num Termux, Alpine ou WSL reais; as opções 1, 6 e 8 em máquina real.
+- **A confirmação aparece também onde o script já pergunta** (por exemplo, o `nvidia.sh install` pede confirmação de novo). Foi escolha minha: "Tem certeza" em tudo que altera o sistema, sem olhar o que cada script faz por dentro.
+- **Testado:** `bash -n`; `tests/menu.test.sh` (e o teste falha de propósito quando se quebra a ocultação de Reiniciar/Desligar, o botão padrão ou a largura das caixas); o menu real num terminal 256 cores (tmux, 56 colunas): tela inicial, diálogo, `Esc` e navegação. **Não testado:** Termux, proot, Alpine e WSL reais; a detecção do proot por ptrace (`TracerPid`); reiniciar, desligar e fechar o terminal de verdade; as opções de setup, NVIDIA instalar e OXWM em máquina real. Terminais não UTF-8 (console do Linux sem fonte unicode) mostram as bordas quebradas.
 
 ## Não lançado (branch `mirrors-sh`, em cima da `termux-mirror-rapido`)
 
