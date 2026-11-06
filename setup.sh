@@ -84,6 +84,11 @@ export PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"
 REPO_DIR_USER="${REPO_DIR:-}"   # guarda se o REPO_DIR foi escolhido pelo usuário
 REPO_URL="${REPO_URL:-https://github.com/V0LtagE1z/Minhas-Paradas.git}"
 REPO_DIR="${REPO_DIR:-$HOME/Minhas-Paradas}"
+# Dotfiles: por padrão o script baixa só os arquivos de que precisa de raw.githubusercontent.com (derivado do
+# REPO_URL) e não clona o repo. DOTFILES_REF = branch, tag ou commit (padrão main; o menu.sh repassa o MENU_REF).
+# DOTFILES_CLONE=1 (ou --clonar-repo) clona o repo em REPO_DIR, para quem quer editar os dotfiles e dar commit.
+DOTFILES_REF="${DOTFILES_REF:-main}"
+DOTFILES_CLONE="${DOTFILES_CLONE:-0}"
 
 # Usuário criado nas distros de desktop e nas distros em proot.
 # ATENÇÃO: o "Distro Proot/.zshrc" tem "gustavo" fixo (o root repassa a sessão com "su - gustavo").
@@ -240,6 +245,7 @@ DRACUT_CONF_D="${DRACUT_CONF_D:-/etc/dracut.conf.d}"
 INITRAMFS_HOOKS_DIR="${INITRAMFS_HOOKS_DIR:-/usr/share/initramfs-tools/hooks}"
 REVERT_MC=0   # 1 = --reverter-temas
 MIRRORS_ONLY=0   # 1 = --mirrors (só reranqueia os mirrors; é o que o mirrors.sh chama)
+DOTFILES_ONLY=0 # 1 = --dotfiles (só copia os dotfiles para o HOME de quem roda)
 NO_EXIT=0        # 1 = --sem-encerrar (não pergunta se encerra a sessão; é o que o menu.sh usa)
 
 # ─── Utilidades ───────────────────────────────────────────────────────────────
@@ -325,6 +331,8 @@ Uso: bash setup.sh [--dry-run]
   --sem-temas-minecraft   não instala e não pergunta pelos temas Minecraft
   --reverter-temas        desfaz os temas Minecraft (GRUB + Plymouth) e sai; não faz mais nada
   --mirrors               só ranqueia os mirrors de novo (como FORCE_MIRRORS=1) e sai; o mesmo que bash mirrors.sh
+  --dotfiles              só aplica os dotfiles (.zshrc, .p10k.zsh, kitty.conf) no HOME de quem roda, com backup .bak; sem pacotes, sem usuário
+  --clonar-repo           pega os dotfiles clonando o repo em REPO_DIR, em vez de baixar só os arquivos necessários
   --cachyos-repo          instala os repositórios do CachyOS mesmo em derivadas fora da lista automática
   --sem-cachyos-repo      não instala os repositórios do CachyOS
   --kernel-cachyos        Fedora: instala o kernel do CachyOS (COPR) sem perguntar
@@ -334,7 +342,7 @@ Uso: bash setup.sh [--dry-run]
 
 No fim o script pergunta se você quer encerrar a sessão (fecha o shell que chamou o script).
 
-Variáveis úteis: NEW_USER (padrão: gustavo), REPO_URL, REPO_DIR,
+Variáveis úteis: NEW_USER (padrão: gustavo), REPO_URL, REPO_DIR, DOTFILES_REF (branch/tag/commit dos dotfiles; padrão main), DOTFILES_CLONE=1,
                  FORCE_PROOT=1 (força o modo proot se a detecção falhar),
                  SKIP_TERMUX_PROOT=1 (Termux: não instala o Arch no proot-distro),
                  TERMUX_PROOT_IMAGE (Termux: imagem do proot-distro; padrão danhunsaker/archlinuxarm:latest em ARM, archlinux:latest em x86_64),
@@ -368,6 +376,8 @@ parse_args() {
       --sem-temas-minecraft)  MC_THEMES=0 ;;
       --reverter-temas)       REVERT_MC=1 ;;
       --mirrors)              MIRRORS_ONLY=1; FORCE_MIRRORS=1 ;;
+      --dotfiles)             DOTFILES_ONLY=1 ;;
+      --clonar-repo)          DOTFILES_CLONE=1 ;;
       --sem-encerrar)         NO_EXIT=1 ;;
       --cachyos-repo)         CACHYOS_REPO=1 ;;
       --sem-cachyos-repo)     CACHYOS_REPO=0 ;;
@@ -1663,7 +1673,7 @@ run_user_phase() {
   fi
 
   log "Executando o setup tradicional como $NEW_USER"
-  (cd /tmp && sudo -H -u "$NEW_USER" env "REPO_URL=$REPO_URL" bash "$tmp" --user-phase) \
+  (cd /tmp && sudo -H -u "$NEW_USER" env "REPO_URL=$REPO_URL" "DOTFILES_REF=$DOTFILES_REF" "DOTFILES_CLONE=$DOTFILES_CLONE" bash "$tmp" --user-phase) \
     || warn "a fase do usuário terminou com erro; rode de novo para tentar completar"
   cleanup
 }
@@ -1780,7 +1790,7 @@ run_user_phase_proot() {
   log "Executando o setup como $NEW_USER (su)"
   # -s /bin/bash: o shell de login dele é o zsh, que interpretaria o comando de outro jeito.
   su -l -s /bin/bash "$NEW_USER" -c \
-    "cd /tmp && env REPO_URL=$(printf '%q' "$REPO_URL") FORCE_PROOT=1 FORCE_ALARM_PROOT=${FORCE_ALARM_PROOT:-0} bash $(printf '%q' "$tmp") --user-phase" \
+    "cd /tmp && env REPO_URL=$(printf '%q' "$REPO_URL") DOTFILES_REF=$(printf '%q' "$DOTFILES_REF") DOTFILES_CLONE=$DOTFILES_CLONE FORCE_PROOT=1 FORCE_ALARM_PROOT=${FORCE_ALARM_PROOT:-0} bash $(printf '%q' "$tmp") --user-phase" \
     || warn "a fase do usuário terminou com erro; rode de novo para tentar completar"
   cleanup
 }
@@ -2022,8 +2032,50 @@ backup_and_copy() {  # origem destino
   log "copiado: $dst"
 }
 
+# ─── Dotfiles: de onde vêm ────────────────────────────────────────────────────
+# https://github.com/USUARIO/REPO(.git) → https://raw.githubusercontent.com/USUARIO/REPO/<ref>. Outro host: falha.
+raw_base() {
+  [[ $REPO_URL =~ ^https://github\.com/([^/]+/[^/]+)$ ]] || return 1
+  printf 'https://raw.githubusercontent.com/%s/%s\n' "${BASH_REMATCH[1]%.git}" "$DOTFILES_REF"
+}
+
+fetch_file() {  # url destino — curl, ou wget se não houver curl
+  if   command -v curl >/dev/null 2>&1; then curl -fsSL --retry 3 --connect-timeout 20 -o "$2" "$1"
+  elif command -v wget >/dev/null 2>&1; then wget -q -O "$2" "$1"
+  else return 127; fi
+}
+
+# Decide uma vez: DOT_BASE preenchido = baixar arquivo por arquivo; vazio = repo clonado em REPO_DIR (o git sempre
+# está instalado a esta altura). Cai no clone com DOTFILES_CLONE=1, REPO_URL fora do GitHub ou sem curl/wget.
+DOT_READY=0; DOT_BASE=""; DOT_TMP=""; DOT_SRC=""
+dotfiles_prepare() {
+  ((DOT_READY)) && return 0
+  DOT_READY=1
+  if [[ $DOTFILES_CLONE != 1 ]]; then
+    if ! DOT_BASE=$(raw_base); then log "REPO_URL não é do GitHub: clonando o repo para pegar os dotfiles"
+    elif ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+      DOT_BASE=""; log "sem curl nem wget: clonando o repo para pegar os dotfiles"
+    fi
+  fi
+  [[ -n $DOT_BASE ]] || clone_or_update "$REPO_URL" "$REPO_DIR"
+}
+
+# "Subpasta/arquivo" → DOT_SRC = de onde copiar (arquivo local, ou a URL em simulação). Não usa $(...): a pasta
+# temporária e o FAILED precisam valer no shell principal. Devolve 1 se o download falhou.
+dotfile_src() {
+  local rel=$1 url
+  if [[ -z $DOT_BASE ]]; then DOT_SRC="$REPO_DIR/$rel"; return 0; fi
+  url="$DOT_BASE/${rel// /%20}"
+  if ((DRY_RUN)); then DOT_SRC=$url; return 0; fi
+  if [[ -z $DOT_TMP ]]; then DOT_TMP=$(mktemp -d); CLEANUP_DIRS+=("$DOT_TMP"); fi
+  DOT_SRC="$DOT_TMP/${rel//[\/ ]/_}"
+  if fetch_file "$url" "$DOT_SRC" && [[ -s $DOT_SRC ]]; then return 0; fi
+  warn "não consegui baixar $url"; FAILED+=("dotfile $rel")
+  return 1
+}
+
 deploy_dotfiles() {
-  clone_or_update "$REPO_URL" "$REPO_DIR"
+  dotfiles_prepare
 
   # Termux, proot e distro normal têm dotfiles diferentes, cada um na sua subpasta.
   local sub f
@@ -2038,14 +2090,15 @@ deploy_dotfiles() {
 
   log "Aplicando dotfiles de: $sub/"
   for f in "${files[@]}"; do
-    backup_and_copy "$REPO_DIR/$sub/$f" "$HOME/$f"
+    if dotfile_src "$sub/$f"; then backup_and_copy "$DOT_SRC" "$HOME/$f"; fi
   done
 }
 
 deploy_kitty() {
   has_linux_gui || return 0   # Kitty só em distro de desktop (não Termux, não proot, não WSL)
   run mkdir -p "$HOME/.config/kitty"
-  backup_and_copy "$REPO_DIR/$DIR_KITTY/kitty.conf" "$HOME/.config/kitty/kitty.conf"
+  dotfiles_prepare
+  if dotfile_src "$DIR_KITTY/kitty.conf"; then backup_and_copy "$DOT_SRC" "$HOME/.config/kitty/kitty.conf"; fi
 }
 
 ensure_editor() {
@@ -2610,6 +2663,19 @@ main() {
 
   if ((REVERT_MC)) && ! is_desktop; then die "--reverter-temas só vale para distros de desktop (os temas não são instalados no Termux nem no proot)."; fi
 
+  # --dotfiles: só copia os dotfiles e o kitty.conf para o HOME de quem roda. Sem pacotes, usuário nem sudo:
+  # supõe zsh, oh-my-zsh e powerlevel10k já instalados (o setup completo faz isso).
+  if ((DOTFILES_ONLY)); then
+    if [[ $EUID -eq 0 ]] && ((! PROOT && ! DRY_RUN)); then die "--dotfiles aplica no HOME de quem roda: rode como usuário normal (no proot, pode ser root)."; fi
+    deploy_dotfiles
+    deploy_kitty
+    echo
+    print_failed
+    ((DRY_RUN)) && log "Simulação concluída: nada foi alterado."
+    hint_p10k
+    return 0
+  fi
+
   # Fase 2 (interna): chamada pelo próprio script, já como o novo usuário (desktop ou proot).
   if ((USER_PHASE)); then
     [[ $EUID -ne 0 ]] || die "A fase do usuário não pode rodar como root."
@@ -2659,7 +2725,7 @@ main() {
     else
       [[ -f $SCRIPT_PATH ]] || die "Salve o script em disco e rode: bash setup.sh"
       log "Reexecutando com $ELEVATE"
-      exec "$ELEVATE" env "REPO_URL=$REPO_URL" "NEW_USER=$NEW_USER" "MC_THEMES=$MC_THEMES" "SKIP_PACMAN_REPOS=$SKIP_PACMAN_REPOS" "SKIP_MIRRORS=$SKIP_MIRRORS" "FORCE_MIRRORS=$FORCE_MIRRORS" "CACHYOS_REPO=$CACHYOS_REPO" "CACHYOS_SEM_SNAPSHOT=$CACHYOS_SEM_SNAPSHOT" "CACHYOS_KERNEL=$CACHYOS_KERNEL" "CACHYOS_KERNEL_VARIANT=$CACHYOS_KERNEL_VARIANT" "PACMAN_MIRRORLIST_INCLUDE=$PACMAN_MIRRORLIST_INCLUDE" "FORCE_APK=$FORCE_APK" "SKIP_APK_REPOS=$SKIP_APK_REPOS" "FORCE_LIBC=${FORCE_LIBC:-}" "FORCE_INIT=${FORCE_INIT:-}" "WSL_DISTRO_NAME=${WSL_DISTRO_NAME:-}" bash "$SCRIPT_PATH" "$@"
+      exec "$ELEVATE" env "REPO_URL=$REPO_URL" "DOTFILES_REF=$DOTFILES_REF" "DOTFILES_CLONE=$DOTFILES_CLONE" "NEW_USER=$NEW_USER" "MC_THEMES=$MC_THEMES" "SKIP_PACMAN_REPOS=$SKIP_PACMAN_REPOS" "SKIP_MIRRORS=$SKIP_MIRRORS" "FORCE_MIRRORS=$FORCE_MIRRORS" "CACHYOS_REPO=$CACHYOS_REPO" "CACHYOS_SEM_SNAPSHOT=$CACHYOS_SEM_SNAPSHOT" "CACHYOS_KERNEL=$CACHYOS_KERNEL" "CACHYOS_KERNEL_VARIANT=$CACHYOS_KERNEL_VARIANT" "PACMAN_MIRRORLIST_INCLUDE=$PACMAN_MIRRORLIST_INCLUDE" "FORCE_APK=$FORCE_APK" "SKIP_APK_REPOS=$SKIP_APK_REPOS" "FORCE_LIBC=${FORCE_LIBC:-}" "FORCE_INIT=${FORCE_INIT:-}" "WSL_DISTRO_NAME=${WSL_DISTRO_NAME:-}" bash "$SCRIPT_PATH" "$@"
     fi
   fi
   if ((! DRY_RUN)); then

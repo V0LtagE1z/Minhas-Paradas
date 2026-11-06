@@ -2,6 +2,34 @@
 
 Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto não usa versões, então as entradas são por data.
 
+## Não lançado (branch `dotfiles-sem-clone`, a partir da `main`)
+
+### 2026-11-06
+
+#### Alterado
+
+- **`menu.sh` sem clone baixa só o que você escolhe, e só na hora.** Antes baixava o tarball do repo inteiro (~280 KB compactado: README, imagem, dotfiles de todos os ambientes, scripts que você nem ia usar) ao abrir. Agora **não baixa nada ao abrir**; ao escolher um item, baixa só o script dele de `raw.githubusercontent.com` para a pasta temporária (que some ao sair). O que o script usa ao lado vem junto: `mirrors.sh` traz o `setup.sh`, `oxwm-setup.sh` traz o `config.lua`. Cada arquivo é baixado uma vez por sessão. Não precisa mais de `tar`, só de `curl` ou `wget`. Download que falha: mensagem de erro e o menu continua (antes o menu saía com código 1 ao abrir); sem `curl` nem `wget`: erro antes de abrir.
+- **`setup.sh` não clona mais o repo inteiro para pegar os dotfiles.** `deploy_dotfiles` e `deploy_kitty` baixam só os arquivos do ambiente (`Distro Normal/`: `.zshrc`, `.p10k.zsh`, `.p10k-ascii.zsh`; `Distro Proot/` e `Termux/`: `.zshrc`, `.p10k.zsh`; mais `Kitty/kitty.conf` em desktop) de `raw.githubusercontent.com`, com a URL derivada do `REPO_URL`. O backup `.bak`/`.bak.N` e a comparação com o arquivo existente continuam iguais. Cai no clone (como antes) com `--clonar-repo`/`DOTFILES_CLONE=1`, com `REPO_URL` fora do GitHub, ou se não houver `curl` nem `wget`.
+- **`DOTFILES_REF`** (padrão `main`) escolhe a branch, tag ou commit dos dotfiles. O `menu.sh` o define igual ao `MENU_REF`, então scripts e dotfiles saem do mesmo ref. Passa pelo `sudo`/`su` junto com o `REPO_URL` (as três reexecuções do `setup.sh`).
+- Em `--dry-run` nada é baixado: os dotfiles aparecem como `copiaria <URL> -> <destino>`.
+
+#### Adicionado
+
+- **`setup.sh --dotfiles`** (e o item **"Dotfiles: só aplicar"** do menu, com "Tem certeza"): só aplica os dotfiles e o `kitty.conf` no `HOME` de quem roda, sem pacotes, usuário nem `sudo`. Recusa root fora do proot (em `--dry-run` aceita). Um arquivo que falha ao baixar gera aviso com a URL e entra na lista de falhas; o arquivo que já estava no `HOME` não é tocado.
+- **`--clonar-repo`** (`DOTFILES_CLONE=1`): o comportamento antigo, para quem quer a pasta `~/Minhas-Paradas` (editar os dotfiles e dar commit, rodar o `mirrors.sh` dela).
+- `tests/dotfiles.test.sh`: `curl` de mentira que serve os arquivos da pasta do repo; confere as URLs (com `%20`), que só os arquivos do ambiente são baixados, backup `.bak` e `.bak.1`, `DOTFILES_REF`, download que falha, simulação sem escrita, recusa de root e queda no clone.
+- `tests/menu.test.sh`: a rota remota agora confere que nada é baixado ao abrir, que só o script escolhido (e suas dependências) é baixado, uma vez só, com o ref certo, que `DOTFILES_REF` chega ao script, que o download que falha não derruba o menu e o erro sem `curl`/`wget`. Os índices dos itens mudaram (o item novo é o terceiro).
+- `README.md`: seção "Só os dotfiles", opções e variáveis novas, menu, "Rodar sem clonar", mirrors, simulação e limitações.
+
+#### Decisões e limites
+
+- **Mudança de comportamento: `~/Minhas-Paradas` deixa de existir depois do setup.** O `mirrors.sh` ali dentro, que o README mandava rodar, some junto; sem a pasta, use o item "Ranquear os mirrors" do menu (baixa o `mirrors.sh` e o `setup.sh`) ou `--clonar-repo`.
+- **A economia é pequena em bytes e maior em disco e requisições inúteis.** Medido neste repo: tarball inteiro 283 KB compactado; todos os scripts juntos 70 KB. O que muda de verdade: não baixar README (60 KB), a imagem (140 KB), os dotfiles dos outros ambientes e os scripts não usados, e não deixar um clone de ~1 MB no disco. Em troca, há uma requisição por arquivo em vez de uma só (com `--retry 3` e timeout de 20 s cada).
+- **Sem checksum, e cada arquivo vem na hora em que é usado.** Se a `main` mudar no meio de uma sessão, scripts de commits diferentes se misturam. Fixar um commit em `MENU_REF`/`DOTFILES_REF` evita; o tarball antigo tinha o mesmo problema só entre a URL do `menu.sh` e o `MENU_REF`.
+- **`--dotfiles` supõe zsh, oh-my-zsh e powerlevel10k já instalados** (o `.zshrc` carrega os dois): é para atualizar os arquivos, não para montar uma máquina nova.
+- **O que o `setup.sh` copia continua o mesmo:** os `*.auto.conf` do Kitty e o `Termux/.zsh_history` seguem de fora, como antes.
+- **Testado:** `bash -n`; `tests/menu.test.sh` e `tests/dotfiles.test.sh`; sete mutantes (sem `%20`, ref fixo, sem backup, sem a dependência do `mirrors.sh`, sem a do OXWM, sem `DOTFILES_REF` no menu, baixar tudo) e todos derrubam os testes; `setup.sh --dry-run` completo em desktop e em proot simulados; `shellcheck` sem avisos novos; download real de `Distro Proot/.zshrc` e `.p10k.zsh` de `raw.githubusercontent.com` (`main`) num `HOME` temporário, idênticos aos do repo; menu pelo pipe, com o `curl` de verdade, baixando só o `setup.sh` da `main` e apagando a pasta temporária. **Não testado:** Termux, proot real, Alpine, WSL e uma distro de desktop de verdade (o `--dotfiles` real como usuário normal foi simulado só com `--dry-run`); a queda no clone por falta de `curl`/`wget` só em simulação; o ref `DOTFILES_REF` com o menu real apontando para esta branch (só depois do push).
+
 ## Não lançado (branch `menu-remoto`, em cima da `menu-cli`)
 
 ### 2026-11-06

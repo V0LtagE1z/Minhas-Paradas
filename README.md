@@ -10,8 +10,9 @@ Meus dotfiles de terminal em um script que monta tudo em uma máquina nova, seja
 | ------- | -------------- |
 | `setup.sh` | O script principal: cria o usuário `gustavo`, instala pacotes, locales, oh-my-zsh, powerlevel10k, plugins, Kitty e fontes e aplica os dotfiles. Funciona em distros de desktop, WSL, proot e Termux (veja "Gerenciadores e ambientes") |
 | `mirrors.sh` | Ranqueia os mirrors de novo, quando você quiser, sem refazer o resto. É só um atalho para `bash setup.sh --mirrors` (veja "Ranquear os mirrors de novo") |
-| `menu.sh` | Menu em tela cheia (TUI): escolhe o que rodar (setup, mirrors, NVIDIA, OXWM), pede "Tem certeza", executa o script e volta ao menu; também reinicia, desliga (não no Termux nem no proot) e fecha o terminal; roda também sem clonar, por `curl ... \| bash` (veja "Menu") |
+| `menu.sh` | Menu em tela cheia (TUI): escolhe o que rodar (setup, mirrors, NVIDIA, OXWM), pede "Tem certeza", executa o script e volta ao menu; também reinicia, desliga (não no Termux nem no proot) e fecha o terminal; roda também sem clonar, por `curl ... \| bash`, baixando só o script do item escolhido (veja "Menu") |
 | `tests/menu.test.sh` | Teste do `menu.sh` com scripts de mentira, teclas lidas de um arquivo e um `curl` de mentira (rota sem clone); não altera o sistema |
+| `tests/dotfiles.test.sh` | Teste do `setup.sh --dotfiles` com um `curl` de mentira que serve os arquivos desta pasta: confere as URLs, o que é baixado, o backup `.bak` e os erros; roda num `HOME` temporário |
 | `nvidia.sh` | Detecta a GPU NVIDIA e instala o driver (open, proprietário ou legado), com modeset, initramfs e PRIME. É independente do `setup.sh` (veja "nvidia.sh") |
 | `oxwm-setup.sh` e `config.lua` | Instalam a configuração do OXWM (gerenciador de janelas X11), migrada do Caelestia/Hyprland (veja "OXWM") |
 | `OXWM/` | Só uma nota (`MIMLeia.md`) sobre mover o `config.lua` para dentro dela |
@@ -53,7 +54,7 @@ Como rodar depende do ambiente:
 | WSL | Como root ou com `sudo`, dentro da distro (o script detecta o ambiente) | Igual às distros de desktop, sem bootloader, temas, Kitty e fonte, e com login automático no `gustavo` (veja a seção do WSL) |
 | Distro em proot (qualquer uma) | Como root (o script detecta o ambiente) | Cria o usuário `gustavo` com `sudo` (se o proot permitir; o script testa) e aplica o setup nele e no root (veja abaixo) |
 
-O script precisa estar salvo em arquivo (`git clone` e `bash setup.sh`). Rodar via `curl ... | bash` não funciona nas distros, porque a segunda fase reexecuta o próprio arquivo. Para escolher o que rodar por um menu, use `bash menu.sh` (veja "Menu"). O `menu.sh` roda também sem clonar, por `curl ... | bash` (veja "Rodar sem clonar"): ele baixa o repo para uma pasta temporária e chama o `setup.sh` de lá, que é um arquivo de verdade.
+O script precisa estar salvo em arquivo (`git clone` e `bash setup.sh`). Rodar via `curl ... | bash` não funciona nas distros, porque a segunda fase reexecuta o próprio arquivo. Para escolher o que rodar por um menu, use `bash menu.sh` (veja "Menu"). O `menu.sh` roda também sem clonar, por `curl ... | bash` (veja "Rodar sem clonar"): ele baixa só o script do item escolhido para uma pasta temporária e chama-o de lá, já que é um arquivo de verdade.
 
 Para ver tudo o que seria feito sem alterar nada, use `bash setup.sh --dry-run`.
 
@@ -77,6 +78,8 @@ Opções de linha de comando (`bash setup.sh --help` lista todas):
 | Opção | O que faz |
 | ----- | --------- |
 | `--dry-run`, `-n` | Mostra o que seria feito sem alterar nada |
+| `--dotfiles` | Só aplica os dotfiles (`.zshrc`, `.p10k.zsh`, `kitty.conf`) no `HOME` de quem roda, com backup `.bak`; sem pacotes, sem usuário (veja "Só os dotfiles") |
+| `--clonar-repo` | Pega os dotfiles clonando o repo em `REPO_DIR`, em vez de baixar só os arquivos necessários |
 | `--temas-minecraft` / `--sem-temas-minecraft` | Instala os temas Minecraft sem perguntar / não instala e não pergunta |
 | `--reverter-temas` | Desfaz os temas Minecraft e sai |
 | `--mirrors` | Só ranqueia os mirrors de novo (como `FORCE_MIRRORS=1`) e sai; é o que o `mirrors.sh` chama |
@@ -89,7 +92,9 @@ Variáveis de ambiente (valor padrão em negrito, quando existe):
 | Variável | Para que serve |
 | -------- | -------------- |
 | `NEW_USER` (**gustavo**) | Nome do usuário criado |
-| `REPO_URL`, `REPO_DIR` | Repositório dos dotfiles e onde ele é clonado (**`~/Minhas-Paradas`**) |
+| `REPO_URL` | Repositório dos dotfiles (**`https://github.com/V0LtagE1z/Minhas-Paradas.git`**); os arquivos são baixados de `raw.githubusercontent.com` com base nele, então só vale para repositórios do GitHub (outro host cai no clone) |
+| `DOTFILES_REF` (**main**) | Branch, tag ou commit de onde saem os dotfiles; o `menu.sh` repassa o `MENU_REF` |
+| `DOTFILES_CLONE=1`, `REPO_DIR` | Clonam o repo em `REPO_DIR` (**`~/Minhas-Paradas`**) para pegar os dotfiles de lá (o mesmo que `--clonar-repo`) |
 | `FORCE_PROOT=1`, `FORCE_ALARM_PROOT=1` | Forçam o modo proot (o segundo também marca Arch Linux ARM) |
 | `FORCE_WSL=1` ou `0` | Força o modo WSL ou desliga a detecção dele |
 | `WSL_SET_DEFAULT_USER` (**1**) | `0` não mexe no `/etc/wsl.conf` |
@@ -174,6 +179,7 @@ Um menu em tela cheia (TUI, em bash puro, sem instalar nada): caixas de bordas a
 | ---- | ---------- | -------------- |
 | Setup completo | `setup.sh --sem-encerrar` | sim |
 | Setup (só simular) | `setup.sh --dry-run --sem-encerrar` | não |
+| Dotfiles: só aplicar | `setup.sh --dotfiles` (veja "Só os dotfiles") | sim |
 | Ranquear os mirrors | `mirrors.sh` (no Arch e derivadas atualiza o sistema inteiro) | sim |
 | Reverter temas Minecraft | `setup.sh --reverter-temas` | sim |
 | NVIDIA: detectar GPU | `nvidia.sh` (só leitura) | não |
@@ -192,7 +198,7 @@ Um menu em tela cheia (TUI, em bash puro, sem instalar nada): caixas de bordas a
 - **`--sem-encerrar`:** o `setup.sh` normalmente pergunta no fim "Deseja encerrar a sessão?" e fecha o shell que o chamou. Sob o menu esse shell seria o próprio menu, então o item de setup passa `--sem-encerrar` e a pergunta some; use "Fechar este terminal" quando quiser fechar o terminal.
 - **Precisa do bash.** Sem ele (Alpine, por exemplo) o menu avisa e mostra o comando de instalação do gerenciador que achar (`apk add bash`, `apt-get install -y bash`...), para rodar como root; depois é só `bash menu.sh`. Com o bash instalado, `sh menu.sh` já reexecuta sozinho em bash.
 - **Rode como usuário normal.** O `setup.sh` e o `oxwm-setup.sh` pedem `sudo` sozinhos; o `nvidia.sh` recusa root.
-- **Teste:** `bash tests/menu.test.sh` (scripts de mentira, respostas por arquivo).
+- **Testes:** `bash tests/menu.test.sh` (scripts de mentira, respostas por arquivo) e `bash tests/dotfiles.test.sh`.
 
 ### Rodar sem clonar (`curl | bash`)
 
@@ -202,36 +208,53 @@ curl -fsSL https://raw.githubusercontent.com/V0LtagE1z/Minhas-Paradas/main/menu.
 
 Abre o mesmo menu numa máquina nova, sem `git clone` antes.
 
-- **Como funciona.** Se não há um `setup.sh` ao lado do menu (é o caso do `curl | bash`, e também de um `menu.sh` baixado sozinho), ele baixa o tarball do repo de `codeload.github.com` (com `curl` ou, se não houver, `wget`, mais `tar`; **sem `git`**) numa pasta temporária (`$TMPDIR`, ou `/tmp`), usa os scripts de lá e **apaga a pasta ao sair**. Rodando de um clone, nada disso acontece.
-- **Fixar a versão.** Por padrão baixa a `main`, ou seja, o que estiver lá na hora. Para fixar, use um commit (ou tag) **na URL e em `MENU_REF`**, os dois iguais, porque a URL traz o `menu.sh` e `MENU_REF` traz o resto:
+- **Como funciona.** Se não há um `setup.sh` ao lado do menu (é o caso do `curl | bash`, e também de um `menu.sh` baixado sozinho), ele **não baixa nada ao abrir**: quando você escolhe um item, baixa só o script dele de `raw.githubusercontent.com` (com `curl` ou, se não houver, `wget`; **sem `git` e sem `tar`**) para uma pasta temporária (`$TMPDIR`, ou `/tmp`) e **apaga a pasta ao sair**. O que o script usa ao lado vem junto: o `mirrors.sh` traz o `setup.sh`, e o `oxwm-setup.sh` traz o `config.lua`. Cada arquivo é baixado uma vez por sessão. Rodando de um clone, nada disso acontece.
+- **Fixar a versão.** Por padrão baixa a `main`, ou seja, o que estiver lá na hora. Para fixar, use um commit (ou tag) **na URL e em `MENU_REF`**, os dois iguais, porque a URL traz o `menu.sh` e `MENU_REF` traz o resto (os scripts e, por `DOTFILES_REF`, os dotfiles):
 
   ```bash
   curl -fsSL https://raw.githubusercontent.com/V0LtagE1z/Minhas-Paradas/<commit>/menu.sh | MENU_REF=<commit> bash
   ```
 
-  Não há checksum: a garantia é o HTTPS do GitHub, e só um commit completo é imutável (branch e tag podem mudar).
+  Não há checksum: a garantia é o HTTPS do GitHub, e só um commit completo é imutável (branch e tag podem mudar). Como cada arquivo é baixado na hora em que é usado, se a `main` mudar no meio da sessão scripts de commits diferentes se misturam; fixar um commit evita isso.
 - **É `| bash`, não `| sh`.** Com `| sh` não dá para reexecutar o script em bash; o menu avisa e mostra o comando certo. Sem bash instalado (Alpine), ele mostra o comando para instalá-lo, como no uso normal.
 - **Os scripts rodam com o terminal como stdin.** No `curl | bash` o stdin é o pipe, e o `setup.sh` e o `nvidia.sh` recusam rodar sem terminal; por isso o menu entrega o `/dev/tty` a cada script que ele chama.
-- **O `setup.sh` continua clonando o repo para `~/Minhas-Paradas`** (é de lá que saem os dotfiles), com o `git` que ele mesmo instala. Isso é à parte da pasta temporária do menu, que some ao sair.
+- **O `setup.sh` não clona mais o repo.** Ele baixa só os dotfiles de que precisa, direto de `raw.githubusercontent.com` (veja "Só os dotfiles"), então **`~/Minhas-Paradas` não existe depois do setup**. Quem quer a pasta (para editar os dotfiles e dar commit, ou para rodar o `mirrors.sh` dela) usa `--clonar-repo`.
 - **Precisa de um terminal** (`/dev/tty`); sem ele o menu recusa antes de baixar qualquer coisa.
+
+## Só os dotfiles
+
+```bash
+bash setup.sh --dotfiles            # ou o item "Dotfiles: só aplicar" do menu
+bash setup.sh --dotfiles --dry-run  # só mostra as URLs e o que faria
+DOTFILES_REF=<commit> bash setup.sh --dotfiles
+```
+
+Baixa só os arquivos do seu ambiente (o mesmo conjunto da etapa 6 e 7 de "O que o script faz") e copia para o `HOME` de quem roda, com backup `.bak` do que for diferente (veja "Backups"). Não instala pacote, não cria usuário e não pede `sudo`.
+
+- **Supõe o zsh, o oh-my-zsh e o powerlevel10k já instalados**; o `.zshrc` carrega os dois. Numa máquina nova, rode o setup completo.
+- **Rode como o usuário que vai usar os arquivos.** Como root o script recusa, exceto no proot (onde o root também recebe os dotfiles). `--dry-run` é aceito como root.
+- **Um arquivo que falha ao baixar** (sem rede, ref inexistente) gera um aviso com a URL e aparece na lista de falhas no fim; o arquivo que já estava no `HOME` não é tocado.
+- `--clonar-repo` clona o repo em `REPO_DIR` e copia de lá, em vez de baixar arquivo por arquivo.
 
 ## Ranquear os mirrors de novo
 
 O `setup.sh` já ranqueia os mirrors na primeira execução. Mirrors mudam (ficam lentos, saem do ar), então depois você pode refazer só essa etapa:
 
 ```bash
-bash ~/Minhas-Paradas/mirrors.sh            # ou: bash setup.sh --mirrors
-bash ~/Minhas-Paradas/mirrors.sh --dry-run  # só mostra o que faria
+bash mirrors.sh            # numa cópia do repo; ou: bash setup.sh --mirrors
+bash mirrors.sh --dry-run  # só mostra o que faria
 ```
+
+Sem uma cópia do repo (o `setup.sh` não clona mais para `~/Minhas-Paradas`), use o item "Ranquear os mirrors" do menu por `curl ... | bash` (veja "Rodar sem clonar"), que baixa o `mirrors.sh` e o `setup.sh` na hora.
 
 - **Pacman (Arch, Arch Linux ARM, EndeavourOS, Artix, CachyOS, Manjaro; desktop e proot):** roda o ranking de novo, faz backup da `mirrorlist` em `.bak` e termina com `pacman -Syyu`, ou seja, **atualiza o sistema inteiro**. Pede root sozinho (como o `setup.sh`). Dentro do proot, rode como root.
 - **Termux:** mede os mirrors de novo e roda `pkg --check-mirror update`. Não faz `pkg upgrade`. Rode como usuário normal.
 - **Outras distros (apt, dnf, zypper, apk):** não há ranking para elas; o script avisa e sai sem mexer em nada.
-- `SKIP_MIRRORS=1` continua mandando; `TERMUX_MIRROR_COUNT` também. O `mirrors.sh` usa o `setup.sh` da mesma pasta, então o repo clonado em `~/Minhas-Paradas` precisa estar lá (o `setup.sh` o clona e atualiza).
+- `SKIP_MIRRORS=1` continua mandando; `TERMUX_MIRROR_COUNT` também. O `mirrors.sh` usa o `setup.sh` da mesma pasta (o menu remoto baixa os dois).
 
 ## Simulação (--dry-run)
 
-`bash setup.sh --dry-run` (ou `-n`) mostra o que o script faria sem alterar nada, nem precisa de root. Linhas `[dry]` são comandos que seriam executados e linhas `[sim]` são mensagens simuladas. Leituras (checar se um grupo, usuário ou repositório já existe) são feitas de verdade, então a saída reflete o estado atual da máquina. Como o repo não é clonado na simulação, os arquivos de dotfiles aparecem como "copiaria" em vez de comparados com os existentes.
+`bash setup.sh --dry-run` (ou `-n`) mostra o que o script faria sem alterar nada, nem precisa de root. Linhas `[dry]` são comandos que seriam executados e linhas `[sim]` são mensagens simuladas. Leituras (checar se um grupo, usuário ou repositório já existe) são feitas de verdade, então a saída reflete o estado atual da máquina. Como nada é baixado na simulação, os dotfiles aparecem como "copiaria <URL>" em vez de comparados com os existentes.
 
 ## Distros em proot (proot-distro)
 
@@ -339,11 +362,11 @@ Nas distros de desktop, as etapas 1 a 3 rodam como root; depois o script cria o 
    - Gera os locales `pt_BR.UTF-8` e `en_US.UTF-8` do sistema e grava `LANG=pt_BR.UTF-8` e `LC_MESSAGES=en_US.UTF-8` em `/etc/locale.conf`. Arch e Debian/Ubuntu usam o `/etc/locale.gen` com `locale-gen` (Debian/Ubuntu instalam antes o pacote `locales`); Fedora instala `glibc-langpack-en` e `glibc-langpack-pt`; openSUSE instala `glibc-locale`; Alpine/postmarketOS (musl) instala `musl-locales` e grava em `/etc/profile.d/10-setup-locale.sh` (veja a seção do Alpine). No Debian/Ubuntu o `/etc/default/locale` também recebe as duas chaves (é o que o login lê). Só `LANG` e `LC_MESSAGES` são tocados: as outras linhas do arquivo ficam, e a cópia original vai para `<arquivo>.setup.bak`. `SKIP_LOCALES=1` pula a etapa; `SYS_LANG` e `SYS_LC_MESSAGES` trocam os valores.
 4. No Arch/CachyOS, instala o `paru` (pelo repositório ou compilando o `paru` do AUR). O `paru-bin` não é usado: ele é pré-compilado e quebra (`libalpm.so.15: cannot open shared object file`) quando o pacman sobe de versão. Se já houver um `paru` que não executa, o script remove o `paru-bin` e recompila.
 5. Clona o oh-my-zsh, o powerlevel10k (em `~/powerlevel10k`) e os plugins `zsh-autosuggestions`, `fast-syntax-highlighting` e `zsh-history-substring-search`.
-6. Copia os dotfiles para o `$HOME`, cada ambiente da sua pasta:
+6. Baixa os dotfiles do repo, **só os arquivos necessários** (um `curl` por arquivo, de `raw.githubusercontent.com`; sem `curl`/`wget`, ou com `--clonar-repo`, clona o repo em `~/Minhas-Paradas`), e copia para o `$HOME`, cada ambiente da sua pasta:
    - Termux: `Termux/.zshrc` e `Termux/.p10k.zsh`.
    - Proot: `Distro Proot/.zshrc` e `.p10k.zsh`.
    - Distros de desktop: `Distro Normal/.zshrc`, `.p10k.zsh` e `.p10k-ascii.zsh`.
-7. **Só em distros:** copia `Kitty/kitty.conf` para `~/.config/kitty/kitty.conf`.
+7. **Só em distros:** baixa e copia `Kitty/kitty.conf` para `~/.config/kitty/kitty.conf`.
 8. Define `EDITOR` e `VISUAL` como `micro` em `~/.zshenv`, se ainda não estiverem definidos.
 9. Troca o shell padrão para o zsh. Nas distros de desktop e no proot isso já foi feito com `usermod -s` para o `gustavo` e para o root.
 10. Instala a fonte MesloLGS NF:
@@ -378,7 +401,7 @@ Desfaz tudo e sai (não executa mais nada do setup). Mostra o que vai fazer, per
 
 Se já existir um dos arquivos de configuração e ele for diferente do repo, o original é guardado ao lado dele como `.bak` (por exemplo `~/.zshrc.bak`). Se o `.bak` já existir, o script usa `.bak.1`, `.bak.2` e assim por diante, sem sobrescrever backups antigos. Isso vale também para o `kitty.conf`.
 
-O script pode ser executado várias vezes: repositórios já clonados só são atualizados, arquivos idênticos ao repo não são copiados de novo e fontes já instaladas são ignoradas.
+O script pode ser executado várias vezes: repositórios já clonados (oh-my-zsh, powerlevel10k, plugins) só são atualizados, arquivos idênticos ao repo não são copiados de novo e fontes já instaladas são ignoradas.
 
 Como o repo é a fonte da verdade, alterações feitas direto no `~/.zshrc` ou no `kitty.conf` são sobrescritas na próxima execução (com backup). Edite os arquivos aqui.
 
@@ -475,6 +498,7 @@ Dois scripts em `Termux/`, escritos em zsh e que precisam de `zstd` e `pv` (`pkg
 - O `nvidia.sh` foi testado só com cenários simulados, sem hardware NVIDIA no desenvolvimento; só o Arch tem execução real prevista (Fedora, Ubuntu e Debian ficam em `--dry-run`). Rode `./nvidia.sh install --dry-run` e leia o plano antes de instalar.
 - O `oxwm-setup.sh` só funciona em Arch e derivadas (usa `paru` ou `yay` e o AUR), é para X11 e o `config.lua` espera o wallpaper e o `claude-desktop` do seu usuário.
 - O `Backup-Restore.sh` procura por padrão um nome diferente do que o `Backup_Termux.sh` gera (veja "Backup do Termux").
+- Os dotfiles são baixados de `raw.githubusercontent.com` sem checksum, e da `main` por padrão (`DOTFILES_REF` fixa um commit). Sem rede para o GitHub o setup não aplica os dotfiles; só o aviso aparece.
 - O `setup.sh` não copia o `Termux/.zsh_history` nem os temas `*.auto.conf` do Kitty; só `.zshrc`, `.p10k.zsh` e o `kitty.conf`.
 - O suporte ao `apk` não foi testado num Alpine ou postmarketOS de verdade (veja "Validação" na seção do Alpine). Wolfi e Chimera são recusados de propósito.
 - Os temas Minecraft e o `--reverter-temas` foram validados com `--dry-run` e com testes em arquivos de exemplo (instalar, reverter e comparar com os originais: `/etc/default/grub`, `mkinitcpio.conf` e `/etc/grub.d`), mas não num boot de verdade. Teste primeiro no Arch com GRUB; Fedora, Debian e Ubuntu só foram escritos a partir da documentação dos dois temas.
