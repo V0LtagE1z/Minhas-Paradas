@@ -71,5 +71,33 @@ else
   [[ $rc == 1 ]] || { echo "FALHOU: sem bash o menu devia sair com 1, saiu com $rc"; fail=1; }
 fi
 
+# Sem clone ("curl | bash"): sem setup.sh ao lado, o menu baixa o tarball (curl de mentira), roda o script de lá
+# com o terminal como stdin, e apaga a pasta temporária ao sair. O script entra pelo pipe, como no uso real.
+mkdir -p "$tmp/pkg/Minhas-Paradas-v1" "$tmp/t" "$tmp/empty"
+printf '#!/usr/bin/env bash\necho "REMOTE setup.sh $*"; echo "STDIN=$(readlink /proc/self/fd/0)"\n' > "$tmp/pkg/Minhas-Paradas-v1/setup.sh"
+tar -czf "$tmp/fake.tgz" -C "$tmp/pkg" Minhas-Paradas-v1
+printf '#!/bin/sh\nwhile [ $# -gt 0 ]; do case $1 in -o) o=$2; shift ;; *) u=$1 ;; esac; shift; done\necho "$u" > "$FAKE_LOG"; cp "$FAKE_TGZ" "$o"\n' > "$tmp/fake/curl"
+chmod +x "$tmp/fake/curl"
+remote() {  # teclas [VAR=valor ...] — roda o menu a partir de uma pasta vazia, lido do pipe
+  printf '%b' "$1" > "$tmp/in"; shift
+  out=$(cd "$tmp/empty" && cat "$here/../menu.sh" | env KERNEL_RELEASE=6.0.0-generic PREFIX= FORCE_PROOT=0 "$@" \
+        MENU_TTY="$tmp/in" TERM=dumb TMPDIR="$tmp/t" FAKE_LOG="$tmp/curl.log" PATH="$tmp/fake:$PATH" bash 2>&1); rc=$?
+}
+remote 'j\n\nq' MENU_REF=v1 FAKE_TGZ="$tmp/fake.tgz"
+[[ $rc == 0 ]] || { echo "FALHOU: o menu remoto saiu com $rc"; fail=1; }
+has 'REMOTE setup.sh --dry-run --sem-encerrar'; has "STDIN=$tmp/in"
+grep -q 'codeload.github.com/V0LtagE1z/Minhas-Paradas/tar.gz/v1$' "$tmp/curl.log" || { echo "FALHOU: URL do tarball errada: $(cat "$tmp/curl.log")"; fail=1; }
+[[ -z $(ls -A "$tmp/t") ]] || { echo "FALHOU: a pasta temporária não foi apagada"; fail=1; }
+# Download que falha: erro claro, código 1 e nada sobra em disco.
+remote 'q' FAKE_TGZ="$tmp/nao-existe.tgz"
+[[ $rc == 1 ]] || { echo "FALHOU: download falho devia sair com 1, saiu com $rc"; fail=1; }
+has 'não consegui baixar'
+[[ -z $(ls -A "$tmp/t") ]] || { echo "FALHOU: sobrou pasta temporária após o erro"; fail=1; }
+# "curl | sh" (sem bash): não dá para reexecutar o stdin, então pede "| bash".
+if [[ -n $posix ]]; then
+  out=$(cat "$here/../menu.sh" | "$posix" 2>&1); rc=$?
+  has '| bash'; [[ $rc == 1 ]] || { echo "FALHOU: curl | sh devia sair com 1, saiu com $rc"; fail=1; }
+fi
+
 ((fail)) && exit 1
 echo "menu.test.sh: ok"

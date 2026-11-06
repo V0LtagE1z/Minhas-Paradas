@@ -3,14 +3,25 @@
 # volta para esta tela. Ações que alteram o sistema pedem "Tem certeza?". Também reinicia, desliga (não no
 # Termux nem no proot: lá o item some) e fecha o terminal.
 # Uso: bash menu.sh   (como usuário normal: os scripts pedem sudo sozinhos; o nvidia.sh recusa root)
-# shortcut: só funciona a partir do clone (acha os scripts ao lado dele). Para rodar via curl o menu
-# terá de clonar o repo antes e entrar nele; veja "Planejado" no README.
+# Sem clone: curl -fsSL https://raw.githubusercontent.com/V0LtagE1z/Minhas-Paradas/main/menu.sh | bash
+#   Sem os outros scripts ao lado, o menu baixa o tarball do repo (curl ou wget + tar, sem git) para uma pasta
+#   temporária, usa os scripts de lá e apaga a pasta ao sair. MENU_REF escolhe a tag/branch/commit (padrão: main).
+# shortcut: o tarball não é conferido por checksum (só HTTPS do GitHub); fixe MENU_REF num commit para não rodar
+#   o que a main tiver na hora. Upgrade: publicar um .sha256 por versão e conferir aqui.
 # shortcut: assume terminal UTF-8 (bordas e ❯); o console do Linux sem fonte unicode mostra lixo. Upgrade: borda ASCII.
 
 # Checagem do bash. POSIX puro de propósito: o ash do Alpine lê um comando por vez, então chega aqui
 # antes de ver a sintaxe de bash lá embaixo. Com bash instalado, só reexecuta; sem ele, avisa e sai.
+# Com "curl | sh" não há arquivo para reexecutar: $0 é "sh" ou o binário do shell (/bin/sh, que não começa com
+# "#!"), então pede para rodar de novo com "| bash".
 if [ -z "${BASH_VERSION:-}" ]; then
-  if command -v bash >/dev/null 2>&1; then exec bash "$0" "$@"; fi
+  if [ -f "$0" ] && [ "$(head -c 2 "$0" 2>/dev/null)" = '#!' ]; then _again="bash $0"
+  else _again="curl -fsSL https://raw.githubusercontent.com/V0LtagE1z/Minhas-Paradas/${MENU_REF:-main}/menu.sh | bash"; fi
+  if command -v bash >/dev/null 2>&1; then
+    case $_again in "bash "*) exec bash "$0" "$@" ;; esac
+    printf '[erro] o menu precisa rodar no bash, não no sh. Rode:\n  %s\n' "$_again" >&2
+    exit 1
+  fi
   if   command -v apk     >/dev/null 2>&1; then _cmd="apk add bash"
   elif command -v apt-get >/dev/null 2>&1; then _cmd="apt-get install -y bash"
   elif command -v dnf     >/dev/null 2>&1; then _cmd="dnf install -y bash"
@@ -18,12 +29,11 @@ if [ -z "${BASH_VERSION:-}" ]; then
   elif command -v pacman  >/dev/null 2>&1; then _cmd="pacman -S --noconfirm bash"
   else _cmd="(instale o pacote bash com o gerenciador de pacotes da sua distro)"
   fi
-  printf '[erro] o menu precisa do bash, e ele não está instalado.\n  Instale como root (ou com sudo/doas na frente):\n    %s\n  Depois rode: bash %s\n' "$_cmd" "$0" >&2
+  printf '[erro] o menu precisa do bash, e ele não está instalado.\n  Instale como root (ou com sudo/doas na frente):\n    %s\n  Depois rode: %s\n' "$_cmd" "$_again" >&2
   exit 1
 fi
 
-DIR="${MENU_DIR:-$(dirname "$(readlink -f -- "${BASH_SOURCE[0]}")")}"
-# Lê as teclas do terminal (e não do stdin) para continuar funcionando no futuro "curl ... | bash".
+# Lê as teclas do terminal (e não do stdin, que no "curl | bash" é o próprio script).
 # MENU_TTY existe só para o teste (tests/menu.test.sh) alimentar as teclas.
 { exec 3<"${MENU_TTY:-/dev/tty}"; } 2>/dev/null || { echo "[erro] o menu precisa de um terminal" >&2; exit 1; }
 
@@ -33,7 +43,32 @@ case ${LC_ALL:-${LC_CTYPE:-${LANG:-}}} in *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) ;; *
 # Cores (salmão/laranja). Terminal "dumb" ou NO_COLOR: sem cor e sem limpar a tela.
 if [[ -n ${NO_COLOR:-} || ${TERM:-dumb} == dumb ]]; then CLS="" HIDE="" SHOW="" ACC="" REV="" OFF=""
 else CLS=$'\e[H\e[2J' HIDE=$'\e[?25l' SHOW=$'\e[?25h' ACC=$'\e[38;5;209m' REV=$'\e[7m' OFF=$'\e[0m'; fi
-trap 'printf "%s" "$SHOW"' EXIT
+TMP_REPO=""   # pasta do repo baixado (rota remota); apagada ao sair
+trap 'printf "%s" "$SHOW"; [[ -z $TMP_REPO ]] || rm -rf -- "$TMP_REPO"' EXIT
+
+# ─── De onde vêm os scripts ───────────────────────────────────────────────────
+MENU_REF=${MENU_REF:-main}
+fetch_repo() {  # sem clone: baixa o tarball do repo (sem git) numa pasta temporária e aponta DIR para ela
+  local url="https://codeload.github.com/V0LtagE1z/Minhas-Paradas/tar.gz/$MENU_REF" dl
+  if   command -v curl >/dev/null 2>&1; then dl=(curl -fsSL --retry 3 --connect-timeout 20 -o)
+  elif command -v wget >/dev/null 2>&1; then dl=(wget -q -O)
+  else echo "[erro] para rodar sem clone o menu precisa de curl ou wget (ou clone o repo e rode bash menu.sh)" >&2; return 1; fi
+  command -v tar >/dev/null 2>&1 || { echo "[erro] para rodar sem clone o menu precisa do tar" >&2; return 1; }
+  TMP_REPO=$(mktemp -d "${TMPDIR:-/tmp}/minhas-paradas.XXXXXX") || return 1   # TMPDIR: o Termux não tem /tmp
+  echo "[menu] baixando o Minhas-Paradas ($MENU_REF)..." >&2
+  "${dl[@]}" "$TMP_REPO/repo.tgz" "$url" && tar -xzf "$TMP_REPO/repo.tgz" --strip-components=1 -C "$TMP_REPO" \
+    || { echo "[erro] não consegui baixar ou extrair $url" >&2; return 1; }
+  rm -f -- "$TMP_REPO/repo.tgz"
+  [[ -f $TMP_REPO/setup.sh ]] || { echo "[erro] o download não trouxe o setup.sh (MENU_REF=$MENU_REF existe?)" >&2; return 1; }
+  DIR=$TMP_REPO
+}
+# Local: os scripts ficam ao lado do menu. Sem setup.sh ali (curl | bash, ou só o menu.sh baixado): rota remota.
+# MENU_DIR existe só para o teste.
+if [[ -n ${MENU_DIR:-} ]]; then DIR=$MENU_DIR
+else
+  DIR=""; [[ -f ${BASH_SOURCE[0]:-} ]] && DIR=$(dirname "$(readlink -f -- "${BASH_SOURCE[0]}")")
+  [[ -n $DIR && -f $DIR/setup.sh ]] || fetch_repo || exit 1
+fi
 
 # ─── Ambiente ─────────────────────────────────────────────────────────────────
 # KERNEL_RELEASE e FORCE_PROOT são os mesmos nomes do setup.sh (aqui também servem ao teste).
@@ -50,7 +85,8 @@ no_power() {  # Termux e proot não têm o que reiniciar/desligar: os itens some
 run_script() {  # script [args...] — roda como filho: um die/exit do script não derruba o menu
   local s=$1 rc; shift
   [[ -f $DIR/$s ]] || { echo "[erro] não achei $DIR/$s"; return; }
-  bash "$DIR/$s" "$@"; rc=$?
+  # stdin = terminal: no "curl | bash" o stdin é o pipe, e setup.sh/nvidia.sh recusam rodar sem terminal ([[ -t 0 ]])
+  bash "$DIR/$s" "$@" <&3; rc=$?
   echo; echo "[menu] $s terminou (código $rc)."
 }
 
