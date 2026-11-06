@@ -4,12 +4,10 @@
 # Termux nem no proot: lá o item some) e fecha o terminal.
 # Uso: bash menu.sh   (como usuário normal: os scripts pedem sudo sozinhos; o nvidia.sh recusa root)
 # Sem clone: curl -fsSL https://raw.githubusercontent.com/V0LtagE1z/Minhas-Paradas/main/menu.sh | bash
-#   Sem os outros scripts ao lado, o menu baixa (curl ou wget, sem git nem tar) só o script do item que você
-#   escolher, para uma pasta temporária que some ao sair; os dotfiles o próprio setup.sh baixa, arquivo por arquivo,
-#   quando precisa. MENU_REF escolhe a tag/branch/commit (padrão: main) e vale para scripts e dotfiles.
-# shortcut: nada é conferido por checksum (só HTTPS do GitHub) e cada arquivo é baixado no momento em que é usado:
-#   se a main andar no meio da sessão, scripts de commits diferentes se misturam. Fixe MENU_REF num commit para
-#   não rodar o que a main tiver na hora. Upgrade: publicar um .sha256 por versão e conferir aqui.
+#   Sem os outros scripts ao lado, o menu baixa o tarball do repo (curl ou wget + tar, sem git) para uma pasta
+#   temporária, usa os scripts de lá e apaga a pasta ao sair. MENU_REF escolhe a tag/branch/commit (padrão: main).
+# shortcut: o tarball não é conferido por checksum (só HTTPS do GitHub); fixe MENU_REF num commit para não rodar
+#   o que a main tiver na hora. Upgrade: publicar um .sha256 por versão e conferir aqui.
 # shortcut: assume terminal UTF-8 (bordas e ❯); o console do Linux sem fonte unicode mostra lixo. Upgrade: borda ASCII.
 
 # Checagem do bash. POSIX puro de propósito: o ash do Alpine lê um comando por vez, então chega aqui
@@ -50,31 +48,27 @@ trap 'printf "%s" "$SHOW"; [[ -z $TMP_REPO ]] || rm -rf -- "$TMP_REPO"' EXIT
 
 # ─── De onde vêm os scripts ───────────────────────────────────────────────────
 MENU_REF=${MENU_REF:-main}
-export DOTFILES_REF=${DOTFILES_REF:-$MENU_REF}   # o setup.sh baixa os dotfiles do mesmo ref dos scripts
-RAW_URL="https://raw.githubusercontent.com/V0LtagE1z/Minhas-Paradas/$MENU_REF"
-# Local: os scripts ficam ao lado do menu. Sem setup.sh ali (curl | bash, ou só o menu.sh baixado): rota remota,
-# em que cada script só é baixado quando o item é escolhido (need). MENU_DIR existe só para o teste.
+fetch_repo() {  # sem clone: baixa o tarball do repo (sem git) numa pasta temporária e aponta DIR para ela
+  local url="https://codeload.github.com/V0LtagE1z/Minhas-Paradas/tar.gz/$MENU_REF" dl
+  if   command -v curl >/dev/null 2>&1; then dl=(curl -fsSL --retry 3 --connect-timeout 20 -o)
+  elif command -v wget >/dev/null 2>&1; then dl=(wget -q -O)
+  else echo "[erro] para rodar sem clone o menu precisa de curl ou wget (ou clone o repo e rode bash menu.sh)" >&2; return 1; fi
+  command -v tar >/dev/null 2>&1 || { echo "[erro] para rodar sem clone o menu precisa do tar" >&2; return 1; }
+  TMP_REPO=$(mktemp -d "${TMPDIR:-/tmp}/minhas-paradas.XXXXXX") || return 1   # TMPDIR: o Termux não tem /tmp
+  echo "[menu] baixando o Minhas-Paradas ($MENU_REF)..." >&2
+  "${dl[@]}" "$TMP_REPO/repo.tgz" "$url" && tar -xzf "$TMP_REPO/repo.tgz" --strip-components=1 -C "$TMP_REPO" \
+    || { echo "[erro] não consegui baixar ou extrair $url" >&2; return 1; }
+  rm -f -- "$TMP_REPO/repo.tgz"
+  [[ -f $TMP_REPO/setup.sh ]] || { echo "[erro] o download não trouxe o setup.sh (MENU_REF=$MENU_REF existe?)" >&2; return 1; }
+  DIR=$TMP_REPO
+}
+# Local: os scripts ficam ao lado do menu. Sem setup.sh ali (curl | bash, ou só o menu.sh baixado): rota remota.
+# MENU_DIR existe só para o teste.
 if [[ -n ${MENU_DIR:-} ]]; then DIR=$MENU_DIR
 else
   DIR=""; [[ -f ${BASH_SOURCE[0]:-} ]] && DIR=$(dirname "$(readlink -f -- "${BASH_SOURCE[0]}")")
-  if [[ -z $DIR || ! -f $DIR/setup.sh ]]; then
-    if   command -v curl >/dev/null 2>&1; then dl=(curl -fsSL --retry 3 --connect-timeout 20 -o)
-    elif command -v wget >/dev/null 2>&1; then dl=(wget -q -O)
-    else echo "[erro] para rodar sem clone o menu precisa de curl ou wget (ou clone o repo e rode bash menu.sh)" >&2; exit 1; fi
-    TMP_REPO=$(mktemp -d "${TMPDIR:-/tmp}/minhas-paradas.XXXXXX") || exit 1   # TMPDIR: o Termux não tem /tmp
-    DIR=$TMP_REPO
-  fi
+  [[ -n $DIR && -f $DIR/setup.sh ]] || fetch_repo || exit 1
 fi
-need() {  # arquivos... — rota remota: baixa para $DIR o que ainda não está lá; localmente não faz nada
-  local f
-  [[ -n $TMP_REPO ]] || return 0
-  for f in "$@"; do
-    [[ -s $DIR/$f ]] && continue
-    echo "[menu] baixando $f ($MENU_REF)..." >&2
-    "${dl[@]}" "$DIR/$f" "$RAW_URL/$f" && [[ -s $DIR/$f ]] \
-      || { rm -f -- "$DIR/$f"; echo "[erro] não consegui baixar $RAW_URL/$f (MENU_REF=$MENU_REF existe?)" >&2; return 1; }
-  done
-}
 
 # ─── Ambiente ─────────────────────────────────────────────────────────────────
 # KERNEL_RELEASE e FORCE_PROOT são os mesmos nomes do setup.sh (aqui também servem ao teste).
@@ -90,9 +84,6 @@ no_power() {  # Termux e proot não têm o que reiniciar/desligar: os itens some
 # ─── Ações ────────────────────────────────────────────────────────────────────
 run_script() {  # script [args...] — roda como filho: um die/exit do script não derruba o menu
   local s=$1 rc; shift
-  local -a deps=("$s")
-  case $s in mirrors.sh) deps+=(setup.sh) ;; oxwm-setup.sh) deps+=(config.lua) ;; esac   # o que o script usa ao lado
-  need "${deps[@]}" || return 0
   [[ -f $DIR/$s ]] || { echo "[erro] não achei $DIR/$s"; return; }
   # stdin = terminal: no "curl | bash" o stdin é o pipe, e setup.sh/nvidia.sh recusam rodar sem terminal ([[ -t 0 ]])
   bash "$DIR/$s" "$@" <&3; rc=$?
@@ -126,7 +117,6 @@ add() { LBL+=("$1"); DESC+=("$2"); CONF+=("$3"); CMD+=("$4"); }
 
 add "Setup completo"           "Usuário, zsh, p10k e dotfiles|Pede sudo; altera o sistema"    "rodar o setup completo"       "run_script setup.sh --sem-encerrar"
 add "Setup (só simular)"       "Mostra o que o setup faria|(--dry-run); nada é alterado"      ""                             "run_script setup.sh --dry-run --sem-encerrar"
-add "Dotfiles: só aplicar"     "Baixa e aplica .zshrc, p10k e|kitty.conf (backup .bak)"       "aplicar só os dotfiles"       "run_script setup.sh --dotfiles"
 add "Ranquear os mirrors"      "Ranqueia os mirrors; no Arch|também atualiza o sistema"       "ranquear os mirrors"          "run_script mirrors.sh"
 add "Reverter temas Minecraft" "Desfaz os temas Minecraft|(GRUB + Plymouth)"                  "reverter os temas Minecraft"  "run_script setup.sh --reverter-temas"
 add "NVIDIA: detectar GPU"     "Detecta a GPU e o ambiente|(só leitura)"                      ""                             "run_script nvidia.sh"
