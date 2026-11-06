@@ -2,6 +2,26 @@
 
 Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto não usa versões, então as entradas são por data.
 
+## Não lançado (branch `menu-remoto`, em cima da `menu-cli`)
+
+### 2026-11-06
+
+#### Adicionado
+
+- **`menu.sh` roda sem `git clone`** (`curl -fsSL https://raw.githubusercontent.com/V0LtagE1z/Minhas-Paradas/main/menu.sh | bash`). Sem um `setup.sh` ao lado do menu (`curl | bash`, ou um `menu.sh` baixado sozinho), ele baixa o tarball do repo de `codeload.github.com` com `curl` (ou `wget`) e `tar`, numa pasta temporária (`$TMPDIR`, ou `/tmp`; o Termux não tem `/tmp`), usa os scripts de lá e apaga a pasta ao sair (também se o download falhar). `MENU_REF` escolhe tag, branch ou commit (padrão `main`). Rodando de um clone, nada muda.
+- **Os scripts chamados pelo menu recebem o terminal como stdin** (`bash script <&3`). Sem isso o `curl | bash` não funcionava: o `setup.sh` (`[[ ! -t 0 ]]`) e o `nvidia.sh` recusam rodar sem terminal, e o stdin do menu é o pipe.
+- **`curl | sh`** (sem bash, ou o binário do shell como `$0`): em vez de tentar `exec bash <o binário do sh>`, o menu avisa e mostra o comando com `| bash`. A mensagem de "bash não instalado" também mostra esse comando quando não há arquivo para rodar de novo.
+- Testes em `tests/menu.test.sh`: rota remota com `curl` de mentira e o script entrando pelo pipe (confere a URL do tarball com `MENU_REF`, que o script chamado roda com o terminal como stdin, e que a pasta temporária some), download que falha (código 1, mensagem, nada sobra) e `curl | sh`.
+- `README.md`: seção "Rodar sem clonar (`curl | bash`)" no lugar do "Planejado"; ajustes na tabela de arquivos e na nota sobre `curl | bash` do `setup.sh`.
+
+#### Decisões e limites
+
+- **Tarball em vez de `git clone`:** o pedido era não precisar de clone, e o `git` pode nem estar instalado numa máquina nova. Custo: sem histórico, e `curl`/`wget` + `tar` viram requisito só da rota remota (o Termux e as distros comuns já os têm; no Alpine o `busybox` traz `wget` e `tar`).
+- **Sem checksum:** a rota remota executa o que o GitHub entregar para o `MENU_REF`. Com `main`, é o que estiver lá na hora; só um commit completo é imutável. A URL e o `MENU_REF` têm de apontar para o mesmo ref (a URL traz o `menu.sh`, `MENU_REF` traz o resto); o menu não tem como descobrir a URL de onde foi lido.
+- **Enquanto o `menu.sh` não estiver na `main`**, a URL da `main` dá 404: use o nome da branch na URL e em `MENU_REF` (por exemplo `.../menu-remoto/menu.sh | MENU_REF=menu-remoto bash`).
+- **O `setup.sh` continua clonando o repo para `~/Minhas-Paradas`** (dotfiles), com o `git` que ele instala; não reaproveita a pasta temporária do menu.
+- **Testado:** `bash -n`; `tests/menu.test.sh`; shellcheck (só avisos informativos, um deles já existia); `bash <(curl ...)` (com `cat` no lugar do curl); download real do tarball do GitHub pelo pipe, com `curl` e sem `curl` (`wget`): rodou o `nvidia.sh` de dentro da pasta temporária, que sumiu ao sair; ref inexistente (404 → mensagem e código 1, nada sobra); `dash menu.sh` num arquivo normal reexecuta em bash. **Não testado:** Termux, proot, Alpine (`wget` do busybox) e WSL reais; o setup completo, o NVIDIA instalar e o OXWM por essa rota.
+
 ## Não lançado (branch `menu-cli`, a partir da `main`)
 
 ### 2026-11-05
@@ -17,9 +37,9 @@ Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep 
 - `tests/menu.test.sh`: roda o menu com scripts de mentira e teclas lidas de um arquivo, com `reboot`, `poweroff` e `sudo` de mentira no PATH (nunca reinicia a máquina). Confere: a flag `--sem-encerrar`; o código de saída de um filho que falha; o "Tem certeza" (padrão Não, `Esc`, setas, `Sim` chamando o `reboot` de mentira); itens ocultos no Termux/proot (3 formas de detectar) e o aviso do WSL; a largura igual de todas as linhas das caixas (rótulos com acento); e a checagem do bash.
 - `README.md`: seção "Menu" (teclas, itens, confirmação, onde somem Reiniciar/Desligar) e linhas na tabela de arquivos.
 
-#### Planejado (não implementado)
+#### Planejado (feito na `menu-remoto`, veja acima)
 
-- **Menu pela internet com `curl`** (`curl -fsSL <URL> | bash`). O menu já lê de `/dev/tty`, mas ainda acha os scripts pela pasta dele e o `setup.sh` precisa estar em arquivo; a entrada remota terá de clonar o repo (ou baixar o tarball) e rodar o `menu.sh` de dentro dele. Sem URL definida ainda; o ideal é fixar uma tag ou commit. Detalhes no README, em "Planejado".
+- **Menu pela internet com `curl`** (`curl -fsSL <URL> | bash`): implementado em 2026-11-06, com tarball em vez de clone.
 
 #### Decisões e limites
 

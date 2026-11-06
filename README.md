@@ -10,8 +10,8 @@ Meus dotfiles de terminal em um script que monta tudo em uma máquina nova, seja
 | ------- | -------------- |
 | `setup.sh` | O script principal: cria o usuário `gustavo`, instala pacotes, locales, oh-my-zsh, powerlevel10k, plugins, Kitty e fontes e aplica os dotfiles. Funciona em distros de desktop, WSL, proot e Termux (veja "Gerenciadores e ambientes") |
 | `mirrors.sh` | Ranqueia os mirrors de novo, quando você quiser, sem refazer o resto. É só um atalho para `bash setup.sh --mirrors` (veja "Ranquear os mirrors de novo") |
-| `menu.sh` | Menu em tela cheia (TUI): escolhe o que rodar (setup, mirrors, NVIDIA, OXWM), pede "Tem certeza", executa o script e volta ao menu; também reinicia, desliga (não no Termux nem no proot) e fecha o terminal (veja "Menu") |
-| `tests/menu.test.sh` | Teste do `menu.sh` com scripts de mentira e teclas lidas de um arquivo; não altera o sistema |
+| `menu.sh` | Menu em tela cheia (TUI): escolhe o que rodar (setup, mirrors, NVIDIA, OXWM), pede "Tem certeza", executa o script e volta ao menu; também reinicia, desliga (não no Termux nem no proot) e fecha o terminal; roda também sem clonar, por `curl ... \| bash` (veja "Menu") |
+| `tests/menu.test.sh` | Teste do `menu.sh` com scripts de mentira, teclas lidas de um arquivo e um `curl` de mentira (rota sem clone); não altera o sistema |
 | `nvidia.sh` | Detecta a GPU NVIDIA e instala o driver (open, proprietário ou legado), com modeset, initramfs e PRIME. É independente do `setup.sh` (veja "nvidia.sh") |
 | `oxwm-setup.sh` e `config.lua` | Instalam a configuração do OXWM (gerenciador de janelas X11), migrada do Caelestia/Hyprland (veja "OXWM") |
 | `OXWM/` | Só uma nota (`MIMLeia.md`) sobre mover o `config.lua` para dentro dela |
@@ -53,7 +53,7 @@ Como rodar depende do ambiente:
 | WSL | Como root ou com `sudo`, dentro da distro (o script detecta o ambiente) | Igual às distros de desktop, sem bootloader, temas, Kitty e fonte, e com login automático no `gustavo` (veja a seção do WSL) |
 | Distro em proot (qualquer uma) | Como root (o script detecta o ambiente) | Cria o usuário `gustavo` com `sudo` (se o proot permitir; o script testa) e aplica o setup nele e no root (veja abaixo) |
 
-O script precisa estar salvo em arquivo (`git clone` e `bash setup.sh`). Rodar via `curl ... | bash` não funciona nas distros, porque a segunda fase reexecuta o próprio arquivo. Para escolher o que rodar por um menu, use `bash menu.sh` (veja "Menu"; o acesso por `curl` está só planejado).
+O script precisa estar salvo em arquivo (`git clone` e `bash setup.sh`). Rodar via `curl ... | bash` não funciona nas distros, porque a segunda fase reexecuta o próprio arquivo. Para escolher o que rodar por um menu, use `bash menu.sh` (veja "Menu"). O `menu.sh` roda também sem clonar, por `curl ... | bash` (veja "Rodar sem clonar"): ele baixa o repo para uma pasta temporária e chama o `setup.sh` de lá, que é um arquivo de verdade.
 
 Para ver tudo o que seria feito sem alterar nada, use `bash setup.sh --dry-run`.
 
@@ -194,13 +194,26 @@ Um menu em tela cheia (TUI, em bash puro, sem instalar nada): caixas de bordas a
 - **Rode como usuário normal.** O `setup.sh` e o `oxwm-setup.sh` pedem `sudo` sozinhos; o `nvidia.sh` recusa root.
 - **Teste:** `bash tests/menu.test.sh` (scripts de mentira, respostas por arquivo).
 
-### Planejado: rodar o menu pela internet com `curl`
+### Rodar sem clonar (`curl | bash`)
 
-**Não implementado.** A ideia é abrir o menu numa máquina nova só com um comando, algo como `curl -fsSL <URL do menu.sh> | bash`. O que falta:
+```bash
+curl -fsSL https://raw.githubusercontent.com/V0LtagE1z/Minhas-Paradas/main/menu.sh | bash
+```
 
-- O `menu.sh` acha os outros scripts pela pasta dele (`MENU_DIR`), e o `setup.sh` precisa estar em arquivo (a segunda fase reexecuta o próprio arquivo). Via `curl | bash` essa pasta não existe. A entrada remota terá de clonar este repo (ou baixar o tarball, se não houver `git`) e rodar o `menu.sh` de dentro do clone.
-- O menu já lê as respostas de `/dev/tty` e não do stdin, que é o que o `curl | bash` ocupa; essa parte já está pronta.
-- Ainda não existe URL fixa. Quando existir, o ideal é apontar para uma tag ou commit, e não para a `main`, já que quem roda `curl | bash` executa o que estiver lá no momento.
+Abre o mesmo menu numa máquina nova, sem `git clone` antes.
+
+- **Como funciona.** Se não há um `setup.sh` ao lado do menu (é o caso do `curl | bash`, e também de um `menu.sh` baixado sozinho), ele baixa o tarball do repo de `codeload.github.com` (com `curl` ou, se não houver, `wget`, mais `tar`; **sem `git`**) numa pasta temporária (`$TMPDIR`, ou `/tmp`), usa os scripts de lá e **apaga a pasta ao sair**. Rodando de um clone, nada disso acontece.
+- **Fixar a versão.** Por padrão baixa a `main`, ou seja, o que estiver lá na hora. Para fixar, use um commit (ou tag) **na URL e em `MENU_REF`**, os dois iguais, porque a URL traz o `menu.sh` e `MENU_REF` traz o resto:
+
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/V0LtagE1z/Minhas-Paradas/<commit>/menu.sh | MENU_REF=<commit> bash
+  ```
+
+  Não há checksum: a garantia é o HTTPS do GitHub, e só um commit completo é imutável (branch e tag podem mudar).
+- **É `| bash`, não `| sh`.** Com `| sh` não dá para reexecutar o script em bash; o menu avisa e mostra o comando certo. Sem bash instalado (Alpine), ele mostra o comando para instalá-lo, como no uso normal.
+- **Os scripts rodam com o terminal como stdin.** No `curl | bash` o stdin é o pipe, e o `setup.sh` e o `nvidia.sh` recusam rodar sem terminal; por isso o menu entrega o `/dev/tty` a cada script que ele chama.
+- **O `setup.sh` continua clonando o repo para `~/Minhas-Paradas`** (é de lá que saem os dotfiles), com o `git` que ele mesmo instala. Isso é à parte da pasta temporária do menu, que some ao sair.
+- **Precisa de um terminal** (`/dev/tty`); sem ele o menu recusa antes de baixar qualquer coisa.
 
 ## Ranquear os mirrors de novo
 
