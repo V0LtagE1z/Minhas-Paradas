@@ -240,6 +240,7 @@ DRACUT_CONF_D="${DRACUT_CONF_D:-/etc/dracut.conf.d}"
 INITRAMFS_HOOKS_DIR="${INITRAMFS_HOOKS_DIR:-/usr/share/initramfs-tools/hooks}"
 REVERT_MC=0   # 1 = --reverter-temas
 MIRRORS_ONLY=0   # 1 = --mirrors (só reranqueia os mirrors; é o que o mirrors.sh chama)
+NO_EXIT=0        # 1 = --sem-encerrar (não pergunta se encerra a sessão; é o que o menu.sh usa)
 
 # ─── Utilidades ───────────────────────────────────────────────────────────────
 DRY_RUN="${DRY_RUN:-0}"   # 1 = só mostra o que seria feito (--dry-run)
@@ -328,6 +329,7 @@ Uso: bash setup.sh [--dry-run]
   --sem-cachyos-repo      não instala os repositórios do CachyOS
   --kernel-cachyos        Fedora: instala o kernel do CachyOS (COPR) sem perguntar
   --sem-kernel-cachyos    Fedora: não instala o kernel do CachyOS e não pergunta
+  --sem-encerrar          não pergunta se quer encerrar a sessão no fim (o menu.sh usa isto para voltar ao menu)
   --help, -h             mostra esta ajuda
 
 No fim o script pergunta se você quer encerrar a sessão (fecha o shell que chamou o script).
@@ -366,6 +368,7 @@ parse_args() {
       --sem-temas-minecraft)  MC_THEMES=0 ;;
       --reverter-temas)       REVERT_MC=1 ;;
       --mirrors)              MIRRORS_ONLY=1; FORCE_MIRRORS=1 ;;
+      --sem-encerrar)         NO_EXIT=1 ;;
       --cachyos-repo)         CACHYOS_REPO=1 ;;
       --sem-cachyos-repo)     CACHYOS_REPO=0 ;;
       --kernel-cachyos)       CACHYOS_KERNEL=1 ;;
@@ -2211,6 +2214,7 @@ find_parent_shell() {
 # (ou quando não dá para perguntar/encerrar).
 finish_session() {
   local msg=$1 target
+  if ((NO_EXIT)); then log "$msg"; return 0; fi   # chamado pelo menu.sh: fechar o shell acima fecharia o menu
   if ((DRY_RUN)); then
     log "perguntaria: \"Deseja encerrar a sessão?\" (sim = fecha o shell que chamou o script; não = mostra o aviso final)"
     return 0
