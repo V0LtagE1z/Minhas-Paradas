@@ -1,11 +1,11 @@
 #!/data/data/com.termux/files/usr/bin/env zsh
 #
-# termux_backup.sh
+# Backup_Termux.sh
 # Faz backup compactado (tar + zstd) das pastas "home" e "usr" do Termux,
 # salvando em ~/storage/shared/Documents.
 #
 # Uso:
-#   ./termux_backup.sh
+#   ./Backup_Termux.sh
 
 set -o pipefail
 

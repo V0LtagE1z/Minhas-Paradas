@@ -71,6 +71,7 @@ need() {  # arquivos... — rota remota: baixa para $DIR o que ainda não está 
   for f in "$@"; do
     [[ -s $DIR/$f ]] && continue
     echo "[menu] baixando $f ($MENU_REF)..." >&2
+    mkdir -p -- "$(dirname -- "$DIR/$f")"   # arquivos em subpasta (.config/oxwm/config.lua)
     "${dl[@]}" "$DIR/$f" "$RAW_URL/$f" && [[ -s $DIR/$f ]] \
       || { rm -f -- "$DIR/$f"; echo "[erro] não consegui baixar $RAW_URL/$f (MENU_REF=$MENU_REF existe?)" >&2; return 1; }
   done
@@ -91,7 +92,7 @@ no_power() {  # Termux e proot não têm o que reiniciar/desligar: os itens some
 run_script() {  # script [args...] — roda como filho: um die/exit do script não derruba o menu
   local s=$1 rc; shift
   local -a deps=("$s")
-  case $s in mirrors.sh) deps+=(setup.sh) ;; oxwm-setup.sh) deps+=(config.lua) ;; esac   # o que o script usa ao lado
+  case $s in mirrors.sh) deps+=(setup.sh) ;; oxwm-setup.sh) deps+=(.config/oxwm/config.lua) ;; esac   # o que o script usa ao lado
   need "${deps[@]}" || return 0
   [[ -f $DIR/$s ]] || { echo "[erro] não achei $DIR/$s"; return; }
   # stdin = terminal: no "curl | bash" o stdin é o pipe, e setup.sh/nvidia.sh recusam rodar sem terminal ([[ -t 0 ]])

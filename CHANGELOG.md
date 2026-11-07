@@ -2,6 +2,18 @@
 
 Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto não usa versões, então as entradas são por data.
 
+## Não lançado (branch `caminhos-reorganizados`, a partir da `main`)
+
+### 2026-11-06
+
+#### Corrigido
+
+- **Scripts acompanham a nova organização de pastas do repo.** O `Kitty/kitty.conf` passou para `.config/kitty/kitty.conf` e o `config.lua` do OXWM para `.config/oxwm/config.lua`. `setup.sh` (`DIR_KITTY`, usado por `--dotfiles` e pelo setup completo) agora baixa o `kitty.conf` do caminho novo; `oxwm-setup.sh` lê a config de `.config/oxwm/` ao lado do script (a mensagem de erro mostra o caminho esperado); `menu.sh` baixa `.config/oxwm/config.lua` na rota sem clone, criando a subpasta na pasta temporária.
+- Comentários de `Termux/Backup_Termux.sh` e `Termux/Backup-Restore.sh` com os nomes atuais dos arquivos.
+- Testes ajustados: `tests/dotfiles.test.sh` espera a URL `.config/kitty/kitty.conf`; `tests/menu.test.sh` confere que o OXWM baixa `.config/oxwm/config.lua`.
+- **Testado:** `bash -n` em todos os `.sh`; `tests/menu.test.sh` e `tests/dotfiles.test.sh`; `oxwm-setup.sh --sem-sistema --dry-run` (acha a config; sem a pasta, para com erro claro); `setup.sh --dotfiles --dry-run` (URL nova do Kitty). **Não testado:** `shellcheck` (não instalado aqui), o download real do `kitty.conf` e do `config.lua` da `main` depois do push, Termux, proot, Alpine e WSL reais.
+- **Não mexi:** `Backup-Restore.sh` ainda procura `Termux-Backup.tar.zst` por padrão, nome diferente do que o `Backup_Termux.sh` gera (já documentado no README).
+
 ## Não lançado (branch `dotfiles-sem-clone`, a partir da `main`)
 
 ### 2026-11-06

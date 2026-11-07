@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Instalador da config OXWM (migrada do Caelestia).
-# Coloque este arquivo na mesma pasta do config.lua e rode: bash oxwm-setup.sh
+# Rode a partir do repo (a config fica em .config/oxwm/config.lua, ao lado deste arquivo): bash oxwm-setup.sh
 set -euo pipefail
 
 usage() {
@@ -40,8 +40,9 @@ here="$(cd "$(dirname "$0")" && pwd)"
 dest="$HOME/.config/oxwm"
 DM_PREV=""
 
-if [ ! -f "$here/config.lua" ]; then
-    echo "Erro: config.lua não está na mesma pasta que este script." >&2
+cfg="$here/.config/oxwm/config.lua"
+if [ ! -f "$cfg" ]; then
+    echo "Erro: não achei $cfg (a pasta .config/oxwm tem de ficar ao lado deste script)." >&2
     exit 1
 fi
 
@@ -352,7 +353,7 @@ if [ -f "$dest/config.lua" ]; then
     run cp "$dest/config.lua" "$bak"
     echo "Config antiga salva em $bak"
 fi
-run cp "$here/config.lua" "$dest/config.lua"
+run cp "$cfg" "$dest/config.lua"
 
 # ------------------------------------------------------------------ startx
 setup_startx() {

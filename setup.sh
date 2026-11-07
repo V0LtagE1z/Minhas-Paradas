@@ -193,7 +193,7 @@ unset _proot_img _proot_name
 DIR_TERMUX="Termux"
 DIR_DISTRO="Distro Normal"
 DIR_PROOT="Distro Proot"
-DIR_KITTY="Kitty"
+DIR_KITTY=".config/kitty"
 
 # Arquivos de cada subpasta que serão copiados para o $HOME.
 DOTFILES_TERMUX=(.zshrc .p10k.zsh)
