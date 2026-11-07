@@ -1,0 +1,10 @@
+{
+    "appearance": {
+        "transparency": {
+            "enabled": true
+        }
+    },
+    "general": {
+        "logo": "/home/gustavo/Pictures/CachyOS.svg"
+    }
+}
