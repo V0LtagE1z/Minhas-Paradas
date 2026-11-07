@@ -145,25 +145,35 @@ add "Sair do menu"         "Sai só do menu|o terminal continua aberto"        "
 N=${#LBL[@]}
 
 # ─── Desenho ──────────────────────────────────────────────────────────────────
-box_top() {  # título — W é a largura da caixa
-  local t=" $1 " d; printf -v d '%*s' $((W - 3 - ${#t})) ''
-  printf '%s╭─%s%s╮%s\n' "$ACC" "$t" "${d// /─}" "$OFF"
+layout() {  # altura (em linhas) do que vai ser desenhado — define W (largura da caixa) e LP (margem esquerda) e imprime a margem de cima
+  local rows cols m
+  read -r rows cols < <(stty size <&3 2>/dev/null)   # linhas e colunas do terminal; sem tty (teste): COLUMNS/LINES, senão 60 e 0
+  [[ $cols =~ ^[0-9]+$ ]] || { cols=${COLUMNS:-60}; rows=${LINES:-0}; }
+  [[ $cols =~ ^[0-9]+$ ]] || cols=60
+  [[ $rows =~ ^[0-9]+$ ]] || rows=0
+  W=$cols; ((W > 72)) && W=72; ((W < 36)) && W=36
+  m=$(((cols - W) / 2)); ((m < 0)) && m=0
+  printf -v LP '%*s' "$m" ''
+  m=$(((rows - $1) / 2)); ((m > 0)) || return 0   # terminal baixo demais: começa no topo
+  printf -v m '%*s' "$m" ''; printf '%s' "${m// /$'\n'}"
 }
-box_bottom() { local d; printf -v d '%*s' $((W - 2)) ''; printf '%s╰%s╯%s\n' "$ACC" "${d// /─}" "$OFF"; }
+box_top() {  # título — W é a largura da caixa, LP a margem esquerda
+  local t=" $1 " d; printf -v d '%*s' $((W - 3 - ${#t})) ''
+  printf '%s%s╭─%s%s╮%s\n' "$LP" "$ACC" "$t" "${d// /─}" "$OFF"
+}
+box_bottom() { local d; printf -v d '%*s' $((W - 2)) ''; printf '%s%s╰%s╯%s\n' "$LP" "$ACC" "${d// /─}" "$OFF"; }
 box_row() {  # texto [1 = selecionado]
   local t=$1 m="  " st="" en="" pad
   ((${#t} > W - 6)) && t="${t:0:W-7}…"
   if [[ ${2:-} == 1 ]]; then m="${ACC}❯${OFF} "; st=$REV; en=$OFF; fi
   printf -v pad '%*s' $((W - 6 - ${#t})) ''
-  printf '%s│%s %s%s%s%s%s %s│%s\n' "$ACC" "$OFF" "$m" "$st" "$t" "$pad" "$en" "$ACC" "$OFF"
+  printf '%s%s│%s %s%s%s%s%s %s│%s\n' "$LP" "$ACC" "$OFF" "$m" "$st" "$t" "$pad" "$en" "$ACC" "$OFF"
 }
 
 draw() {
   local i d1 d2
-  read -r _ W < <(stty size <&3 2>/dev/null)   # largura do terminal; sem tty (teste) cai nos 60
-  [[ $W =~ ^[0-9]+$ ]] || W=60
-  ((W > 72)) && W=72; ((W < 36)) && W=36
   printf '%s%s' "$CLS" "$HIDE"
+  layout $((N + 9))   # 3 caixas (N itens + 2 bordas cada, +2 linhas de descrição) + a linha de teclas
   box_top "Minhas-Paradas"
   for ((i = 0; i < NINST; i++)); do box_row "${LBL[i]}" $((i == sel)); done
   box_bottom
@@ -172,7 +182,7 @@ draw() {
   box_bottom
   d1=${DESC[sel]%%|*}; d2=${DESC[sel]#*|}
   box_top "Descrição"; box_row "$d1"; box_row "$d2"; box_bottom
-  printf ' ↑↓ mover   Enter escolher   q sair\n'
+  printf '%s ↑↓ mover   Enter escolher   q sair\n' "$LP"
 }
 
 key() {  # lê uma tecla do terminal (fd 3) → KEY: up down left right enter esc, ou o próprio caractere
@@ -191,10 +201,11 @@ confirm() {  # ação — "Tem certeza que deseja <ação>?"; o padrão é Não
   local yes=0 a b
   while :; do
     printf '%s%s' "$CLS" "$HIDE"
+    layout 8   # 7 linhas da caixa + a linha de teclas
     if ((yes)); then a="[ Sim ]"; b="  Não  "; else a="  Sim  "; b="[ Não ]"; fi
     box_top "Confirmar"; box_row ""; box_row "Tem certeza que deseja"; box_row "$1?"; box_row ""
     box_row "$a    $b"; box_bottom
-    printf ' ←→ escolher  Enter ok  Esc cancela\n'
+    printf '%s ←→ escolher  Enter ok  Esc cancela\n' "$LP"
     key
     case $KEY in
       left|right|h|l|$'\t') yes=$((1 - yes)) ;;

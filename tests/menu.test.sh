@@ -17,7 +17,7 @@ chmod +x "$tmp/fake/"*
 fail=0
 run() {  # teclas [VAR=valor ...] — \n = Enter, \033[B = seta para baixo; a saída fica em $out
   printf '%b' "$1" > "$tmp/in"; shift
-  out=$(env KERNEL_RELEASE=6.0.0-generic PREFIX= FORCE_PROOT=0 "$@" MENU_DIR="$tmp" MENU_TTY="$tmp/in" \
+  out=$(env KERNEL_RELEASE=6.0.0-generic PREFIX= FORCE_PROOT=0 COLUMNS= LINES= "$@" MENU_DIR="$tmp" MENU_TTY="$tmp/in" \
         TERM=dumb PATH="$tmp/fake:$PATH" bash "$here/../menu.sh" 2>&1); rc=$?
   [[ $rc == 0 ]] || { echo "FALHOU: o menu saiu com $rc"; fail=1; }
 }
@@ -41,6 +41,19 @@ for l in sys.stdin:
     if l and l[0] in "╭│╰" and len(l) != 60: print(len(l), l)' <<<"$out")
   [[ -z $bad ]] || { echo "FALHOU: caixa desalinhada:"; echo "$bad"; fail=1; }
 fi
+
+# Centralizado: sem tty o menu lê COLUMNS/LINES. Terminal 100x40: a caixa (72 colunas) começa na coluna 14 (também a de
+# "Tem certeza"), as teclas ficam alinhadas com ela, e o menu (13 itens + 9 = 22 linhas) tem (40-22)/2 = 9 linhas em branco em cima.
+run '\nn\nq' COLUMNS=100 LINES=40
+bad=$(grep -F -e '╭' -e '│' -e '╰' <<<"$out" | grep -vE '^ {14}[^ ]')
+[[ -z $bad ]] || { echo "FALHOU: caixa fora do centro (esperava 14 colunas de margem):"; echo "$bad" | head -3; fail=1; }
+grep -qE '^ {15}↑↓ mover' <<<"$out" || { echo "FALHOU: a linha de teclas não está alinhada com a caixa"; fail=1; }
+[[ -z $(head -n 9 <<<"$out" | tr -d ' ') && $(sed -n 10p <<<"$out") == "$(printf '%14s' '')╭"* ]] \
+  || { echo "FALHOU: o menu devia começar na linha 10 (9 em branco em cima)"; fail=1; }
+# Terminal estreito e baixo: sem margem nenhuma (largura mínima 36, começa no topo).
+run '\nn\nq' COLUMNS=30 LINES=10
+bad=$(grep -F -e '╭' -e '│' -e '╰' <<<"$out" | grep -vE '^[^ ]')
+[[ -z $bad && $(sed -n 1p <<<"$out") == '╭'* ]] || { echo "FALHOU: terminal pequeno não devia ter margem"; fail=1; }
 
 # O padrão do botão é Não: Enter direto cancela. Esc também cancela.
 run '\n\nq';  has 'Tem certeza'; hasnt 'FAKE setup.sh'

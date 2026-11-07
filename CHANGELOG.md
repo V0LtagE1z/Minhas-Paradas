@@ -2,6 +2,26 @@
 
 Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto não usa versões, então as entradas são por data.
 
+## Não lançado (branch `menu-centralizado-wallpapers`, a partir da `caminhos-reorganizados`)
+
+### 2026-11-07
+
+#### Alterado
+
+- **`menu.sh`: a caixa do menu fica centrada no terminal.** Antes ficava colada na esquerda. Agora a margem esquerda é `(colunas - largura) / 2` e a de cima é `(linhas - altura) / 2`, para o menu e para a tela "Tem certeza"; a linha de teclas acompanha a caixa. A largura continua de 36 a 72 colunas. Terminal mais baixo que o menu começa no topo; sem tty (teste) usa `COLUMNS`/`LINES`. A posição é recalculada a cada tela desenhada (a cada tecla); o menu não trata o redimensionamento da janela na hora.
+
+#### Adicionado
+
+- **`setup.sh` copia os wallpapers.** No setup completo (como `gustavo`) e em `--wallpapers` (novo, só isso), copia as imagens da pasta `Wallpapers/` do repo para `<Imagens|Pictures>/Wallpapers` do `HOME`. A pasta vem do `xdg-user-dir PICTURES` se estiver configurada; senão `Imagens` ou `Pictures`, a que existir; senão `Imagens` em sistema em português e `Pictures` nos outros. Só imagens (`jpg`, `jpeg`, `png`, `webp`, `gif`, `bmp`, `avif`, `tif`, `tiff`); não sobrescreve arquivo existente; só em distros de desktop com interface gráfica (no WSL, proot e Termux não faz nada). Sem clonar, lista a pasta pela API do GitHub (60 consultas por hora por IP, sem token) e baixa cada imagem do `raw`; falha vira aviso e entra na lista do fim. `--dry-run` mostra o destino sem baixar. `--dotfiles` sozinho não copia wallpapers.
+
+#### Testado e não testado
+
+- **Testado:** `bash -n` em `menu.sh`, `setup.sh` e nos testes; `tests/menu.test.sh` (caixa centrada em 100x40, sem margem em 30x10) e um render real num pty de 100x30 (14 colunas de margem, 4 linhas em cima); `tests/dotfiles.test.sh` (pasta Imagens/Pictures por `LANG`, por `locale.conf`, por pasta existente e por XDG; filtro de extensão, também em maiúscula; não sobrescreve; API fora do ar; `DOTFILES_REF`; `--dry-run`; proot; e o ramo com repo clonado, usando um repo git local). Os testes novos foram validados com mutantes (um defeito inserido de propósito em cada comportamento faz o teste falhar). O teste do clone pegou um bug meu: imagem com extensão maiúscula (`.PNG`) era ignorada.
+- **`shellcheck` 0.11:** sem aviso de tipo novo nos arquivos alterados. O `setup.sh` passou de 49 para 57 ocorrências do SC2031 (nota que ele já tinha) e o teste ganhou uma nota SC2012 sobre um `ls`.
+- **Testado com rede real:** `setup.sh --wallpapers` como usuário comum, contra a API e o `raw` do GitHub (ref `main`): baixou `Luna E Terra.jpg` (140145 bytes, mesmo hash do git da imagem do repo) em `Pictures/Wallpapers`, e a segunda execução manteve o arquivo.
+- **Não testado:** o `xdg-user-dir` de verdade (o teste usa um de mentira), o idioma pt_BR de verdade (só por arquivos e `LANG` simulados) e nenhum ambiente real (Termux, proot, Alpine, WSL, distros de desktop).
+- **Não mexi:** o `config.lua` do OXWM continua com `/home/gustavo/Pictures/Wallpapers/Luna E Terra.jpg`; num sistema em português que use `Imagens`, o OXWM não acha a imagem (veja o README, seção "Wallpapers").
+
 ## Não lançado (branch `caminhos-reorganizados`, a partir da `main`)
 
 ### 2026-11-06
