@@ -2,6 +2,16 @@
 
 Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto não usa versões, então as entradas são por data.
 
+## Não lançado (branch `oxwm-wallpaper-imagens`, a partir da `menu-centralizado-wallpapers`)
+
+### 2026-11-07
+
+#### Corrigido
+
+- **OXWM acha o wallpaper em `Imagens` também.** O `config.lua` fixava `/home/gustavo/Pictures/Wallpapers/Luna E Terra.jpg`; como o `setup.sh` agora copia para `Imagens/Wallpapers` em sistema em português, o `feh` falhava e o fundo ficava vazio. O autostart agora procura em `$HOME/Pictures/Wallpapers` e depois em `$HOME/Imagens/Wallpapers` (`Pictures` vence se as duas tiverem), e usa o `$HOME` de quem está logado em vez de `/home/gustavo` fixo. A variável `wallpaper` virou o caminho relativo `Wallpapers/Luna E Terra.jpg`. Sem a imagem em nenhuma das pastas, o `feh` não roda.
+- README: a seção do OXWM citava `Luna E Terra.png`, mas o arquivo do repo é `.jpg`.
+- **Testado:** a string do autostart, avaliada em Lua (`lupa`) a partir do próprio `config.lua` e executada com `sh -c` e um `feh` de mentira: só `Pictures`, só `Imagens`, as duas (`Pictures` vence) e nenhuma (não chama o `feh`), todas com o espaço no nome. **Não testado:** o OXWM de verdade carregando o `config.lua` e rodando o autostart (não há OXWM nem X11 aqui), e se o OXWM executa a string por `sh -c` do mesmo jeito que o comando anterior (usei o mesmo formato `sh -c`).
+
 ## Não lançado (branch `menu-centralizado-wallpapers`, a partir da `caminhos-reorganizados`)
 
 ### 2026-11-07
@@ -20,7 +30,7 @@ Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep 
 - **`shellcheck` 0.11:** sem aviso de tipo novo nos arquivos alterados. O `setup.sh` passou de 49 para 57 ocorrências do SC2031 (nota que ele já tinha) e o teste ganhou uma nota SC2012 sobre um `ls`.
 - **Testado com rede real:** `setup.sh --wallpapers` como usuário comum, contra a API e o `raw` do GitHub (ref `main`): baixou `Luna E Terra.jpg` (140145 bytes, mesmo hash do git da imagem do repo) em `Pictures/Wallpapers`, e a segunda execução manteve o arquivo.
 - **Não testado:** o `xdg-user-dir` de verdade (o teste usa um de mentira), o idioma pt_BR de verdade (só por arquivos e `LANG` simulados) e nenhum ambiente real (Termux, proot, Alpine, WSL, distros de desktop).
-- **Não mexi:** o `config.lua` do OXWM continua com `/home/gustavo/Pictures/Wallpapers/Luna E Terra.jpg`; num sistema em português que use `Imagens`, o OXWM não acha a imagem (veja o README, seção "Wallpapers").
+- **Não mexi (nesta branch):** o `config.lua` do OXWM continuava fixo em `Pictures`; resolvido na branch `oxwm-wallpaper-imagens`, logo abaixo.
 
 ## Não lançado (branch `caminhos-reorganizados`, a partir da `main`)
 

@@ -19,8 +19,9 @@ local shift = "Shift"
 --   claude-desktop "claude://claude.ai/new?surface=chat&source=desktop_action"
 local claude_cmd = "claude-desktop"
 
--- Wallpaper (aplicado no autostart com o feh)
-local wallpaper = "/home/gustavo/Pictures/Wallpapers/Luna E Terra.jpg"
+-- Wallpaper (aplicado no autostart com o feh). O setup.sh copia a pasta Wallpapers/ para Pictures ou Imagens, conforme o
+-- idioma do sistema; o autostart usa a primeira das duas que tiver a imagem (Pictures vence se as duas tiverem).
+local wallpaper = "Wallpapers/Luna E Terra.jpg"
 
 local scripts = "~/.config/oxwm/scripts/"
 local function sh(cmd)
@@ -245,7 +246,7 @@ oxwm.key.bind({ modkey }, "Period", oxwm.spawn({ "rofi", "-modi", "emoji", "-sho
 -- Autostart
 -------------------------------------------------------------------------------
 oxwm.autostart("setxkbmap -layout br")
-oxwm.autostart("sh -c \"feh --bg-fill '" .. wallpaper .. "'\"")
+oxwm.autostart("sh -c 'for d in Pictures Imagens; do f=\"$HOME/$d/" .. wallpaper .. "\"; [ -f \"$f\" ] && exec feh --bg-fill \"$f\"; done'")
 once("dunst", "dunst")
 once("nm-applet", "nm-applet")
 once("xcape", 'xcape -e "Super_L=Super_L|space"')

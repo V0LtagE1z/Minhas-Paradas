@@ -19,7 +19,7 @@ Meus dotfiles de terminal em um script que monta tudo em uma máquina nova, seja
 | `Distro Normal/` | Dotfiles para distros Linux de desktop |
 | `Distro Proot/` | Dotfiles para distros rodando em proot (proot-distro) |
 | `Termux/` | Dotfiles do Termux e os scripts de backup e restauração (veja "Backup do Termux") |
-| `Wallpapers/` | `Luna E Terra.jpg`, papel de parede 1920 x 1280. O `setup.sh` copia a pasta inteira (só imagens) para `Imagens/Wallpapers` ou `Pictures/Wallpapers` (veja "Wallpapers"); o `config.lua` do OXWM o espera fixo em `/home/gustavo/Pictures/Wallpapers/` |
+| `Wallpapers/` | `Luna E Terra.jpg`, papel de parede 1920 x 1280. O `setup.sh` copia a pasta inteira (só imagens) para `Imagens/Wallpapers` ou `Pictures/Wallpapers` (veja "Wallpapers"); o `config.lua` do OXWM procura em `~/Pictures/Wallpapers/` e depois em `~/Imagens/Wallpapers/` |
 
 Arquivos de cada pasta:
 
@@ -270,7 +270,7 @@ O setup completo (como `gustavo`) e `--wallpapers` copiam as imagens da pasta `W
 - **Só imagens** (`jpg`, `jpeg`, `png`, `webp`, `gif`, `bmp`, `avif`, `tif`, `tiff`, em maiúscula ou minúscula). Texto e subpastas da pasta `Wallpapers/` são ignorados.
 - **Não sobrescreve.** Imagem com o mesmo nome que já está lá fica como está (diferente dos dotfiles, aqui não há backup `.bak`: o arquivo pode ser seu e grande).
 - **Sem clonar:** o script lista a pasta pela API do GitHub (`api.github.com`) e baixa cada imagem de `raw.githubusercontent.com`. Sem token, a API limita a 60 consultas por hora por IP; se estourar, aparece um aviso, a falha entra na lista do fim e o resto do setup segue. Com `--clonar-repo`, lê a pasta do clone. `DOTFILES_REF` vale também aqui.
-- **OXWM:** o `config.lua` dele fixa `/home/gustavo/Pictures/Wallpapers/Luna E Terra.jpg`. Num sistema em português que use `Imagens`, o OXWM não acha a imagem; ajuste o caminho no `config.lua` ou crie `Pictures` antes de rodar o setup.
+- **OXWM:** o autostart do `config.lua` procura `Luna E Terra.jpg` em `~/Pictures/Wallpapers/` e, se não achar, em `~/Imagens/Wallpapers/` (`Pictures` vence se as duas tiverem), então funciona nos dois idiomas. Sem a imagem em nenhuma das duas, o `feh` não roda e o fundo fica como está.
 
 ## Ranquear os mirrors de novo
 
@@ -519,7 +519,7 @@ O que faz (sem `--sem-sistema`), depois de pedir confirmação:
 
 Sempre, também com `--sem-sistema`: copia o `config.lua` para `~/.config/oxwm/` (o antigo vira `config.lua.bak-<data>`) e cria os scripts `screenshot.sh` (tela cheia ou região, copia para a área de transferência), `record.sh` (grava a tela, com ou sem som do sistema; rode de novo para parar) e `powermenu.sh` (menu de energia no `rofi`) em `~/.config/oxwm/scripts/`. A sessão do Hyprland continua intacta.
 
-O `config.lua` usa Super como tecla principal, tags 1 a 8 normais e 9 a 12 "especiais" (`mus`, `com`, `todo`, `sys`: música, comunicação, tarefas e monitor do sistema). Como o OXWM não tem scratchpad, os especiais são tags comuns alternadas por atalho (Super+M, D, R e Ctrl+Shift+Esc). Super+C abre o app do Claude (`claude-desktop`), Super+Shift+R recarrega a configuração, e o wallpaper (`feh`) aponta para `/home/gustavo/Pictures/Wallpapers/Luna E Terra.png`: copie o `Luna E Terra.png` do repo para lá ou ajuste a variável `wallpaper`.
+O `config.lua` usa Super como tecla principal, tags 1 a 8 normais e 9 a 12 "especiais" (`mus`, `com`, `todo`, `sys`: música, comunicação, tarefas e monitor do sistema). Como o OXWM não tem scratchpad, os especiais são tags comuns alternadas por atalho (Super+M, D, R e Ctrl+Shift+Esc). Super+C abre o app do Claude (`claude-desktop`), Super+Shift+R recarrega a configuração, e o wallpaper (`feh`) é o `Luna E Terra.jpg`, procurado em `~/Pictures/Wallpapers/` e depois em `~/Imagens/Wallpapers/` (o `setup.sh` copia para lá; veja "Wallpapers"). Para outra imagem, ajuste a variável `wallpaper` (caminho relativo a essas pastas).
 
 ## Backup do Termux
 
