@@ -1,12 +1,12 @@
 #!/data/data/com.termux/files/usr/bin/env zsh
 #
-# termux_restore.sh
+# Backup-Restore.sh
 # Restaura backup compactado (tar + zstd) das pastas "home" e "usr" do Termux.
 # Sem argumento, usa o backup mais recente em ~/storage/shared/Documents.
 #
 # Uso:
-#   ./termux_restore.sh
-#   ./termux_restore.sh /caminho/especifico.tar.zst
+#   ./Backup-Restore.sh
+#   ./Backup-Restore.sh /caminho/especifico.tar.zst
 
 set -o pipefail
 

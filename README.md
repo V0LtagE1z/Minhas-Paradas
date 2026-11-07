@@ -14,13 +14,12 @@ Meus dotfiles de terminal em um script que monta tudo em uma máquina nova, seja
 | `tests/menu.test.sh` | Teste do `menu.sh` com scripts de mentira, teclas lidas de um arquivo e um `curl` de mentira (rota sem clone); não altera o sistema |
 | `tests/dotfiles.test.sh` | Teste do `setup.sh --dotfiles` com um `curl` de mentira que serve os arquivos desta pasta: confere as URLs, o que é baixado, o backup `.bak` e os erros; roda num `HOME` temporário |
 | `nvidia.sh` | Detecta a GPU NVIDIA e instala o driver (open, proprietário ou legado), com modeset, initramfs e PRIME. É independente do `setup.sh` (veja "nvidia.sh") |
-| `oxwm-setup.sh` e `config.lua` | Instalam a configuração do OXWM (gerenciador de janelas X11), migrada do Caelestia/Hyprland (veja "OXWM") |
-| `OXWM/` | Só uma nota (`MIMLeia.md`) sobre mover o `config.lua` para dentro dela |
+| `oxwm-setup.sh` | Instala a configuração do OXWM (gerenciador de janelas X11), migrada do Caelestia/Hyprland; lê o `.config/oxwm/config.lua` (veja "OXWM") |
+| `.config/` | Configs no formato do `~/.config`: `kitty/` (terminal Kitty e temas claro/escuro, só distros de desktop), `oxwm/` (`config.lua` do OXWM) e `hypr/` (Hyprland, ainda não usado pelos scripts) |
 | `Distro Normal/` | Dotfiles para distros Linux de desktop |
 | `Distro Proot/` | Dotfiles para distros rodando em proot (proot-distro) |
 | `Termux/` | Dotfiles do Termux e os scripts de backup e restauração (veja "Backup do Termux") |
-| `Kitty/` | Configuração do terminal Kitty e os temas claro/escuro (só distros de desktop) |
-| `Luna E Terra.jpg` | Papel de parede 1920 x 1280. O `setup.sh` não o aplica; o `config.lua` do OXWM o espera em `~/Pictures/Wallpapers/` |
+| `Wallpapers/` | `Luna E Terra.jpg`, papel de parede 1920 x 1280. O `setup.sh` não o aplica; o `config.lua` do OXWM o espera em `~/Pictures/Wallpapers/` |
 
 Arquivos de cada pasta:
 
@@ -31,8 +30,8 @@ Arquivos de cada pasta:
 | `.p10k-ascii.zsh` | `Distro Normal/` | Versão só ASCII do prompt, usada quando `TERM=linux` (console sem fontes especiais) |
 | `.zsh_history` | `Termux/` | Histórico de comandos do Termux guardado no repo. O `setup.sh` **não** o aplica (só copia `.zshrc` e `.p10k.zsh`) |
 | `Backup_Termux.sh`, `Backup-Restore.sh` | `Termux/` | Backup e restauração do Termux inteiro (veja "Backup do Termux") |
-| `kitty.conf` | `Kitty/` | Fonte (MesloLGS NF), opacidade 0.85 e tamanho da janela do Kitty. É o único arquivo do Kitty que o `setup.sh` copia |
-| `dark-theme.auto.conf`, `no-preference-theme.auto.conf` | `Kitty/` | Cores do Kitty para o tema escuro do sistema e para quando não há preferência. O Kitty (0.38 ou mais novo) carrega arquivos com esses nomes sozinho, mas o `setup.sh` **não** os copia: ponha em `~/.config/kitty/` à mão |
+| `kitty.conf` | `.config/kitty/` | Fonte (MesloLGS NF), opacidade 0.85 e tamanho da janela do Kitty. É o único arquivo do Kitty que o `setup.sh` copia |
+| `dark-theme.auto.conf`, `no-preference-theme.auto.conf` | `.config/kitty/` | Cores do Kitty para o tema escuro do sistema e para quando não há preferência. O Kitty (0.38 ou mais novo) carrega arquivos com esses nomes sozinho, mas o `setup.sh` **não** os copia: ponha em `~/.config/kitty/` à mão |
 
 ## Como usar
 
@@ -228,7 +227,7 @@ curl -fsSL https://raw.githubusercontent.com/V0LtagE1z/Minhas-Paradas/main/menu.
 
 Abre o mesmo menu numa máquina nova, sem `git clone` antes.
 
-- **Como funciona.** Se não há um `setup.sh` ao lado do menu (é o caso do `curl | bash`, e também de um `menu.sh` baixado sozinho), ele **não baixa nada ao abrir**: quando você escolhe um item, baixa só o script dele de `raw.githubusercontent.com` (com `curl` ou, se não houver, `wget`; **sem `git` e sem `tar`**) para uma pasta temporária (`$TMPDIR`, ou `/tmp`) e **apaga a pasta ao sair**. O que o script usa ao lado vem junto: o `mirrors.sh` traz o `setup.sh`, e o `oxwm-setup.sh` traz o `config.lua`. Cada arquivo é baixado uma vez por sessão. Rodando de um clone, nada disso acontece.
+- **Como funciona.** Se não há um `setup.sh` ao lado do menu (é o caso do `curl | bash`, e também de um `menu.sh` baixado sozinho), ele **não baixa nada ao abrir**: quando você escolhe um item, baixa só o script dele de `raw.githubusercontent.com` (com `curl` ou, se não houver, `wget`; **sem `git` e sem `tar`**) para uma pasta temporária (`$TMPDIR`, ou `/tmp`) e **apaga a pasta ao sair**. O que o script usa ao lado vem junto: o `mirrors.sh` traz o `setup.sh`, e o `oxwm-setup.sh` traz o `.config/oxwm/config.lua`. Cada arquivo é baixado uma vez por sessão. Rodando de um clone, nada disso acontece.
 - **Fixar a versão.** Por padrão baixa a `main`, ou seja, o que estiver lá na hora. Para fixar, use um commit (ou tag) **na URL e em `MENU_REF`**, os dois iguais, porque a URL traz o `menu.sh` e `MENU_REF` traz o resto (os scripts e, por `DOTFILES_REF`, os dotfiles):
 
   ```bash
@@ -386,7 +385,7 @@ Nas distros de desktop, as etapas 1 a 3 rodam como root; depois o script cria o 
    - Termux: `Termux/.zshrc` e `Termux/.p10k.zsh`.
    - Proot: `Distro Proot/.zshrc` e `.p10k.zsh`.
    - Distros de desktop: `Distro Normal/.zshrc`, `.p10k.zsh` e `.p10k-ascii.zsh`.
-7. **Só em distros:** baixa e copia `Kitty/kitty.conf` para `~/.config/kitty/kitty.conf`.
+7. **Só em distros:** baixa e copia `.config/kitty/kitty.conf` para `~/.config/kitty/kitty.conf`.
 8. Define `EDITOR` e `VISUAL` como `micro` em `~/.zshenv`, se ainda não estiverem definidos.
 9. Troca o shell padrão para o zsh. Nas distros de desktop e no proot isso já foi feito com `usermod -s` para o `gustavo` e para o root.
 10. Instala a fonte MesloLGS NF:
@@ -481,7 +480,7 @@ Fora do escopo por enquanto: sessão X11 (PRIME sync e `xorg.conf` estão nos pl
 
 ## OXWM
 
-`oxwm-setup.sh` instala a configuração do OXWM, um gerenciador de janelas X11, com os atalhos migrados do Caelestia (Hyprland). Só para Arch e derivadas: precisa de `paru` ou `yay` (o `oxwm-git` vem do AUR). O `config.lua` tem que estar na **mesma pasta** do script.
+`oxwm-setup.sh` instala a configuração do OXWM, um gerenciador de janelas X11, com os atalhos migrados do Caelestia (Hyprland). Só para Arch e derivadas: precisa de `paru` ou `yay` (o `oxwm-git` vem do AUR). O `.config/oxwm/config.lua` tem que estar **ao lado** do script (como no repo).
 
 ```
 bash oxwm-setup.sh [--startx] [--dm=sddm|lightdm] [--sem-sistema]
@@ -503,7 +502,7 @@ O que faz (sem `--sem-sistema`), depois de pedir confirmação:
 
 Sempre, também com `--sem-sistema`: copia o `config.lua` para `~/.config/oxwm/` (o antigo vira `config.lua.bak-<data>`) e cria os scripts `screenshot.sh` (tela cheia ou região, copia para a área de transferência), `record.sh` (grava a tela, com ou sem som do sistema; rode de novo para parar) e `powermenu.sh` (menu de energia no `rofi`) em `~/.config/oxwm/scripts/`. A sessão do Hyprland continua intacta.
 
-O `config.lua` usa Super como tecla principal, tags 1 a 8 normais e 9 a 12 "especiais" (`mus`, `com`, `todo`, `sys`: música, comunicação, tarefas e monitor do sistema). Como o OXWM não tem scratchpad, os especiais são tags comuns alternadas por atalho (Super+M, D, R e Ctrl+Shift+Esc). Super+C abre o app do Claude (`claude-desktop`), Super+Shift+R recarrega a configuração, e o wallpaper (`feh`) aponta para `/home/gustavo/Pictures/Wallpapers/Luna E Terra.png`: copie o `Luna E Terra.png` do repo para lá ou ajuste a variável `wallpaper`. A nota `OXWM/MIMLeia.md` lembra de fazer o `oxwm-setup.sh` ler o `config.lua` de dentro dessa pasta; por enquanto ele continua na raiz.
+O `config.lua` usa Super como tecla principal, tags 1 a 8 normais e 9 a 12 "especiais" (`mus`, `com`, `todo`, `sys`: música, comunicação, tarefas e monitor do sistema). Como o OXWM não tem scratchpad, os especiais são tags comuns alternadas por atalho (Super+M, D, R e Ctrl+Shift+Esc). Super+C abre o app do Claude (`claude-desktop`), Super+Shift+R recarrega a configuração, e o wallpaper (`feh`) aponta para `/home/gustavo/Pictures/Wallpapers/Luna E Terra.png`: copie o `Luna E Terra.png` do repo para lá ou ajuste a variável `wallpaper`.
 
 ## Backup do Termux
 

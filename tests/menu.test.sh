@@ -106,6 +106,7 @@ remote 'j\n\n\n\nq'
 # mirrors.sh usa o setup.sh ao lado, e o OXWM usa o config.lua: vêm junto; nada além disso.
 remote 'jjj\ns\nq';      [[ $(fetched) == "mirrors.sh setup.sh " ]]    || { echo "FALHOU: mirrors devia baixar mirrors.sh e setup.sh, baixou: $(fetched)"; fail=1; }
 remote 'jjjjjjjj\ns\nq'; [[ $(fetched) == "config.lua oxwm-setup.sh " ]] || { echo "FALHOU: OXWM devia baixar oxwm-setup.sh e config.lua, baixou: $(fetched)"; fail=1; }
+grep -qx "$raw/main/.config/oxwm/config.lua" "$tmp/curl.log" || { echo "FALHOU: o config.lua do OXWM devia vir de .config/oxwm/ (baixou: $(cat "$tmp/curl.log" | tr '\n' ' '))"; fail=1; }
 # Download que falha: erro claro, o menu continua (não cai), nada roda e nada sobra em disco.
 remote 'j\n\nq' FAKE_FAIL=1
 [[ $rc == 0 ]] || { echo "FALHOU: download falho não devia derrubar o menu (saiu com $rc)"; fail=1; }

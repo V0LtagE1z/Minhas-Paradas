@@ -64,7 +64,7 @@ has 'não consegui baixar'; has 'dotfile Distro Proot/.zshrc'
 # Simulação: não baixa nada, não escreve nada, mostra as URLs (distro normal + kitty; root é aceito só em --dry-run).
 rm -f "$tmp/home"/.zshrc* "$tmp/home"/.p10k*
 run -- --dotfiles --dry-run; ok
-has "[sim]"; has "$raw/main/Distro%20Normal/.zshrc"; has "$raw/main/Distro%20Normal/.p10k-ascii.zsh"; has "$raw/main/Kitty/kitty.conf"
+has "[sim]"; has "$raw/main/Distro%20Normal/.zshrc"; has "$raw/main/Distro%20Normal/.p10k-ascii.zsh"; has "$raw/main/.config/kitty/kitty.conf"
 [[ ! -s $tmp/curl.log && -z $(ls -A "$tmp/home") ]] || { echo "FALHOU: a simulação baixou ou escreveu algo"; fail=1; }
 
 # Distro normal de verdade não roda como root (aqui o teste roda como root, então cai na recusa).
