@@ -2,6 +2,28 @@
 
 Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto não usa versões, então as entradas são por data.
 
+## Não lançado (branch `caelestia-setup`, a partir da `main`)
+
+### 2026-11-07
+
+#### Adicionado
+
+- **`caelestia-setup.sh`: instala o Caelestia e aplica os seus atalhos.** Só Arch e derivadas. Instala o `caelestia-cli` (AUR, com `paru` ou `yay`) se o comando `caelestia` não existe, roda o instalador oficial `caelestia install` (interativo) e depois copia `.config/caelestia/hypr-vars.lua` e `hypr-user.lua` para `~/.config/caelestia/`. Arquivo existente que difere vira `<nome>.bak-<data>_<hora>`; igual, fica como está. Opções: `--so-atalhos` (só copia os dois arquivos, sem instalar nada) e `--dry-run`/`-n`. Confere os dois `.lua` antes de instalar qualquer coisa.
+- **Os atalhos, em `.config/caelestia/`.** `hypr-vars.lua` (sobrepõe o `variables.lua` padrão): terminal `kitty` em Super+Enter, navegador `flock -n /tmp/zen.lock zen-browser`, editor `kitty micro` em Super+Alt+C. `hypr-user.lua`: teclado `br`/`abnt2`, mouse `flat` e Super+C abrindo o `claude-desktop`. Reconstruídos a partir dos atalhos do OXWM e do que você descreveu, não copiados dos seus arquivos reais: se o seu `~/.config/caelestia/` tem algo a mais, falta aqui.
+- **`menu.sh`: item "Caelestia: instalar + atalhos"** (com "Tem certeza"). Na rota sem clone (`curl | bash`) baixa o script e os dois `.lua`; nada além disso.
+- **`tests/caelestia.test.sh`.** `pacman`, `paru` e `caelestia` de mentira num `HOME` temporário: ordem das chamadas (paru, install, atalhos), backup do arquivo que o instalador deixa, `--so-atalhos`, caelestia já instalado, sem helper, sem pacman, `.lua` faltando, opção desconhecida e `--dry-run`. Com o `lupa`, carrega os dois `.lua` contra uma API `hl` de mentira, confere os valores e que cada chave do `hypr-vars.lua` existe no `variables.lua` do repo (uma chave errada o Caelestia ignora em silêncio).
+
+#### Alterado
+
+- `tests/menu.test.sh`: o item novo desloca Reiniciar e Desligar (índices 10 e 11), a margem de cima do menu centrado (8 linhas em 100x40) e ganha dois testes (item local e rota remota com os dois `.lua`).
+- README: seção "Caelestia", tabela de arquivos, tabela do menu, rota sem clone, testes e limitações; a `.config/hypr/` passa a constar como não usada pelos scripts.
+
+#### Testado e não testado
+
+- **Testado:** `bash -n` e `shellcheck` (sem avisos) nos arquivos novos e no `menu.sh`; `tests/caelestia.test.sh`, `tests/menu.test.sh` e `tests/dotfiles.test.sh`. Os testes novos foram validados com mutantes (um defeito inserido de propósito em cada comportamento faz o teste falhar: backup, ordem, checagem do pacman, `caelestia` já instalado, chave com nome errado, dependências do menu remoto e item do menu).
+- **Não testado:** nada num Arch de verdade, com `paru`, com o `caelestia install` real nem com o Hyprland carregando os dois `.lua` (a API `hl` do teste é de mentira, e `hl.config`/`hl.bind` foram copiados do uso que o próprio Caelestia faz). Também não conferi se o `accel_profile = "flat"` e o `kb_variant` valem na versão do Hyprland que você usa. O `caelestia install` não tem opção documentada para rodar sem perguntas, então fica interativo.
+- **Não mexi:** na `.config/hypr/` (só passou a constar como não usada); apagar fica para você decidir.
+
 ## Não lançado (branch `oxwm-wallpaper-imagens`, a partir da `menu-centralizado-wallpapers`)
 
 ### 2026-11-07
