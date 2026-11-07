@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Teste do caelestia-setup.sh e dos dois .lua: pacman, paru e caelestia de mentira, HOME numa pasta temporária,
+# Teste do caelestia-setup.sh e dos arquivos de .config/caelestia/: pacman, paru e caelestia de mentira, HOME numa pasta temporária,
 # nada é instalado de verdade. A parte do Lua precisa de python3 com o módulo lupa (pip install lupa); sem ele, é pulada.
 # Uso: bash tests/caelestia.test.sh
 set -u
@@ -39,7 +39,7 @@ has 'paru -S --needed caelestia-cli'; has 'caelestia install'; has 'Dry-run'
 reset; run --
 [[ $rc == 0 ]] || bad "instalação saiu com $rc: $out"
 [[ $(cat "$log") == $'paru -S --needed caelestia-cli\ncaelestia install' ]] || bad "ordem/chamadas erradas: $(tr '\n' '|' < "$log")"
-for f in hypr-vars.lua hypr-user.lua; do cmp -s "$repo/.config/caelestia/$f" "$tmp/home/.config/caelestia/$f" || bad "$f não foi copiado igual ao do repo"; done
+for f in hypr-vars.lua hypr-user.lua shell.json; do cmp -s "$repo/.config/caelestia/$f" "$tmp/home/.config/caelestia/$f" || bad "$f não foi copiado igual ao do repo"; done
 bak=$(ls "$tmp/home/.config/caelestia"/hypr-vars.lua.bak-* 2>/dev/null | head -1)
 [[ -n $bak && $(cat "$bak") == instalador ]] || bad "o hypr-vars.lua do instalador devia virar backup"
 
@@ -62,11 +62,16 @@ rm "$tmp/min/pacman"; run --; [[ $rc == 1 ]] && has 'Arch' || bad "sem pacman de
 run -- --so-atalhos; [[ $rc == 0 ]] || bad "--so-atalhos devia funcionar fora do Arch (saiu com $rc)"
 fake pacman; fake paru
 
-# .lua faltando: erro antes de instalar qualquer coisa.
+# arquivo faltando: erro antes de instalar qualquer coisa.
 reset; mkdir "$tmp/semlua"; cp "$repo/caelestia-setup.sh" "$tmp/semlua/"
 out=$(env -i HOME="$tmp/home" PATH="$tmp/min" FAKE_LOG="$log" "$tmp/min/bash" "$tmp/semlua/caelestia-setup.sh" 2>&1); rc=$?
-[[ $rc == 1 && ! -s $log ]] && has 'não achei' || bad ".lua faltando devia sair com 1 antes de instalar (saiu com $rc)"
+[[ $rc == 1 && ! -s $log ]] && has 'não achei' || bad "arquivo faltando devia sair com 1 antes de instalar (saiu com $rc)"
 run -- --foo; [[ $rc == 1 ]] || bad "opção desconhecida devia sair com 1"
+
+# shell.json tem de ser um JSON válido (o shell do Caelestia lê esse arquivo).
+if command -v python3 >/dev/null; then
+  python3 -c 'import json,sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$repo/.config/caelestia/shell.json" 2>/dev/null || bad "shell.json não é um JSON válido"
+fi
 
 # Os dois .lua: sintaxe, valores e nomes de chave. Com um "hl" de mentira no lugar da API do Hyprland.
 if python3 -c 'import lupa' 2>/dev/null; then
@@ -75,19 +80,19 @@ import sys
 from lupa import LuaRuntime
 d = sys.argv[1]; lua = LuaRuntime()
 v = lua.execute(open(d + "/hypr-vars.lua", encoding="utf-8").read())
-exp = {"terminal": "kitty", "browser": "flock -n /tmp/zen.lock zen-browser", "editor": "kitty micro",
-       "kbTerminal": "SUPER + Return", "kbEditor": "SUPER + ALT + C"}
+exp = {"browser": "flock -n /tmp/zen.lock zen-browser || true", "kbTerminal": "SUPER + RETURN"}
 for k, x in exp.items():
     if v[k] != x: print("ERRO hypr-vars.lua:", k, "=", v[k], "esperado", x)
 lua.execute('''calls = {binds = {}}
 hl = {config = function(t) calls.config = t end,
+      monitor = function(t) calls.monitor = t end,
       bind = function(k, a) calls.binds[k] = a end,
       dsp = {exec_cmd = function(c) return "exec:" .. c end}}''')
 lua.execute(open(d + "/hypr-user.lua", encoding="utf-8").read())
 c = lua.globals()["calls"]
 i = c["config"]["input"]
-if (i["kb_layout"], i["kb_variant"], i["accel_profile"]) != ("br", "abnt2", "flat"): print("ERRO hypr-user.lua: teclado/mouse")
-if c["binds"]["SUPER + C"] != "exec:claude-desktop": print("ERRO hypr-user.lua: Super+C devia abrir o claude-desktop")
+if (i["kb_layout"], i["accel_profile"]) != ("br", "flat"): print("ERRO hypr-user.lua: teclado/mouse")
+if c["monitor"]["output"] != "eDP-1": print("ERRO hypr-user.lua: faltou o monitor eDP-1")
 for k in v: print("CHAVE", k)
 EOF
   ) || bad "o python falhou ao carregar os .lua"

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# caelestia-setup.sh — instala o Caelestia (shell + Hyprland) e aplica os seus atalhos. Só Arch e derivadas.
+# caelestia-setup.sh — instala o Caelestia (shell + Hyprland) e aplica a sua config. Só Arch e derivadas.
 #   1. instala o caelestia-cli (AUR) com paru ou yay;
 #   2. roda `caelestia install`, o instalador oficial: ele instala o shell e coloca a config do Hyprland em ~/.config/hypr;
-#   3. copia .config/caelestia/hypr-vars.lua e hypr-user.lua (só os seus overrides) para ~/.config/caelestia/.
-# Os dois .lua ficam ao lado deste script, em .config/caelestia/ (como no repo). Uso: bash caelestia-setup.sh [opções]
+#   3. copia .config/caelestia/ (hypr-vars.lua, hypr-user.lua e shell.json: só os seus overrides) para ~/.config/caelestia/.
+# Esses arquivos ficam ao lado deste script, em .config/caelestia/ (como no repo). Uso: bash caelestia-setup.sh [opções]
 # shortcut: o `caelestia install` é interativo e não tem opção documentada para rodar sem perguntas; ele pergunta
 #   o que instalar (Spotify, Discord, zen...). Upgrade: passar as respostas quando o instalador ganhar flags.
 set -euo pipefail
@@ -12,7 +12,7 @@ usage() {
     cat <<'EOF_USAGE'
 Uso: bash caelestia-setup.sh [opções]
 
-  --so-atalhos    não instala nada: só copia os atalhos (hypr-vars.lua e hypr-user.lua) para ~/.config/caelestia/
+  --so-atalhos    não instala nada: só copia a config (hypr-vars.lua, hypr-user.lua e shell.json) para ~/.config/caelestia/
                   (para reaplicar depois de editar, ou numa máquina que já tem o Caelestia)
   --dry-run, -n   mostra o que seria feito (linhas [dry]) sem alterar nada
 EOF_USAGE
@@ -31,7 +31,7 @@ done
 
 here="$(cd "$(dirname "$0")" && pwd)"
 dest="$HOME/.config/caelestia"
-FILES=(hypr-vars.lua hypr-user.lua)
+FILES=(hypr-vars.lua hypr-user.lua shell.json)
 
 # Confere os arquivos antes de instalar qualquer coisa: faltando um, não adianta instalar o resto.
 for f in "${FILES[@]}"; do
@@ -70,7 +70,7 @@ if [ "$ONLY_KEYS" -eq 0 ]; then
     run caelestia install
 fi
 
-# Os atalhos entram depois do instalador, que pode mexer em ~/.config/caelestia. O arquivo que já existe e difere
+# Os arquivos entram depois do instalador, que pode mexer em ~/.config/caelestia. O arquivo que já existe e difere
 # vira <nome>.bak-<data>_<hora>; igual ao do repo, fica como está.
 run mkdir -p "$dest"
 for f in "${FILES[@]}"; do
@@ -85,4 +85,4 @@ if [ "$DRY_RUN" -eq 1 ]; then
     exit 0
 fi
 echo
-echo "Pronto. Atalhos em $dest. Saia do Hyprland e entre de novo para valerem."
+echo "Pronto. Config em $dest. Saia do Hyprland e entre de novo para valer."

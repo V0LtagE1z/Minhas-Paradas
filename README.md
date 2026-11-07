@@ -15,9 +15,9 @@ Meus dotfiles de terminal em um script que monta tudo em uma máquina nova, seja
 | `tests/caelestia.test.sh` | Teste do `caelestia-setup.sh` com `pacman`, `paru` e `caelestia` de mentira num `HOME` temporário (ordem das chamadas, backup, `--so-atalhos`, erros) e dos dois `.lua`, carregados com o `lupa` (Python) contra uma API `hl` de mentira; não instala nada |
 | `tests/dotfiles.test.sh` | Teste do `setup.sh --dotfiles` e `--wallpapers` com um `curl` de mentira que serve os arquivos desta pasta: confere as URLs, o que é baixado, o backup `.bak`, a pasta dos wallpapers (Imagens ou Pictures) e os erros; roda num `HOME` temporário |
 | `nvidia.sh` | Detecta a GPU NVIDIA e instala o driver (open, proprietário ou legado), com modeset, initramfs e PRIME. É independente do `setup.sh` (veja "nvidia.sh") |
-| `caelestia-setup.sh` | Instala o Caelestia (shell + Hyprland) com o instalador oficial e aplica os seus atalhos, copiando `.config/caelestia/hypr-vars.lua` e `hypr-user.lua` (veja "Caelestia") |
+| `caelestia-setup.sh` | Instala o Caelestia (shell + Hyprland) com o instalador oficial e aplica a sua config, copiando `.config/caelestia/` (`hypr-vars.lua`, `hypr-user.lua` e `shell.json`; veja "Caelestia") |
 | `oxwm-setup.sh` | Instala a configuração do OXWM (gerenciador de janelas X11), migrada do Caelestia/Hyprland; lê o `.config/oxwm/config.lua` (veja "OXWM") |
-| `.config/` | Configs no formato do `~/.config`: `kitty/` (terminal Kitty e temas claro/escuro, só distros de desktop), `oxwm/` (`config.lua` do OXWM), `caelestia/` (os atalhos do Caelestia, usados pelo `caelestia-setup.sh`) e `hypr/` (config do Hyprland com os valores padrão do Caelestia, não usada pelos scripts: veja "Caelestia") |
+| `.config/` | Configs no formato do `~/.config`: `kitty/` (terminal Kitty e temas claro/escuro, só distros de desktop), `oxwm/` (`config.lua` do OXWM), `caelestia/` (a sua config do Caelestia, usada pelo `caelestia-setup.sh`) e `hypr/` (config do Hyprland com os valores padrão do Caelestia, não usada pelos scripts: veja "Caelestia") |
 | `Distro Normal/` | Dotfiles para distros Linux de desktop |
 | `Distro Proot/` | Dotfiles para distros rodando em proot (proot-distro) |
 | `Termux/` | Dotfiles do Termux e os scripts de backup e restauração (veja "Backup do Termux") |
@@ -232,7 +232,7 @@ curl -fsSL https://raw.githubusercontent.com/V0LtagE1z/Minhas-Paradas/main/menu.
 
 Abre o mesmo menu numa máquina nova, sem `git clone` antes.
 
-- **Como funciona.** Se não há um `setup.sh` ao lado do menu (é o caso do `curl | bash`, e também de um `menu.sh` baixado sozinho), ele **não baixa nada ao abrir**: quando você escolhe um item, baixa só o script dele de `raw.githubusercontent.com` (com `curl` ou, se não houver, `wget`; **sem `git` e sem `tar`**) para uma pasta temporária (`$TMPDIR`, ou `/tmp`) e **apaga a pasta ao sair**. O que o script usa ao lado vem junto: o `mirrors.sh` traz o `setup.sh`, o `oxwm-setup.sh` traz o `.config/oxwm/config.lua` e o `caelestia-setup.sh` traz os dois `.lua` de `.config/caelestia/`. Cada arquivo é baixado uma vez por sessão. Rodando de um clone, nada disso acontece.
+- **Como funciona.** Se não há um `setup.sh` ao lado do menu (é o caso do `curl | bash`, e também de um `menu.sh` baixado sozinho), ele **não baixa nada ao abrir**: quando você escolhe um item, baixa só o script dele de `raw.githubusercontent.com` (com `curl` ou, se não houver, `wget`; **sem `git` e sem `tar`**) para uma pasta temporária (`$TMPDIR`, ou `/tmp`) e **apaga a pasta ao sair**. O que o script usa ao lado vem junto: o `mirrors.sh` traz o `setup.sh`, o `oxwm-setup.sh` traz o `.config/oxwm/config.lua` e o `caelestia-setup.sh` traz os três arquivos de `.config/caelestia/`. Cada arquivo é baixado uma vez por sessão. Rodando de um clone, nada disso acontece.
 - **Fixar a versão.** Por padrão baixa a `main`, ou seja, o que estiver lá na hora. Para fixar, use um commit (ou tag) **na URL e em `MENU_REF`**, os dois iguais, porque a URL traz o `menu.sh` e `MENU_REF` traz o resto (os scripts e, por `DOTFILES_REF`, os dotfiles):
 
   ```bash
@@ -526,7 +526,7 @@ O `config.lua` usa Super como tecla principal, tags 1 a 8 normais e 9 a 12 "espe
 
 ## Caelestia
 
-`caelestia-setup.sh` instala o [Caelestia](https://github.com/caelestia-dots/caelestia) (shell + Hyprland) e aplica os seus atalhos. Só para Arch e derivadas: precisa de `paru` ou `yay` (o `caelestia-cli` vem do AUR; o "Setup completo" do menu instala o `paru`). Os dois `.lua` de `.config/caelestia/` têm que estar **ao lado** do script (como no repo).
+`caelestia-setup.sh` instala o [Caelestia](https://github.com/caelestia-dots/caelestia) (shell + Hyprland) e aplica a sua config. Só para Arch e derivadas: precisa de `paru` ou `yay` (o `caelestia-cli` vem do AUR; o "Setup completo" do menu instala o `paru`). Os arquivos de `.config/caelestia/` têm que estar **ao lado** do script (como no repo).
 
 ```
 bash caelestia-setup.sh [--so-atalhos] [--dry-run]
@@ -534,28 +534,27 @@ bash caelestia-setup.sh [--so-atalhos] [--dry-run]
 
 | Opção | O que faz |
 | ----- | --------- |
-| `--so-atalhos` | Não instala nada: só copia `hypr-vars.lua` e `hypr-user.lua` para `~/.config/caelestia/`. Serve para reaplicar depois de editar, ou numa máquina que já tem o Caelestia |
+| `--so-atalhos` | Não instala nada: só copia `hypr-vars.lua`, `hypr-user.lua` e `shell.json` para `~/.config/caelestia/`. Serve para reaplicar depois de editar, ou numa máquina que já tem o Caelestia |
 | `--dry-run`, `-n` | Mostra o que seria feito (linhas `[dry]`) sem alterar nada |
 
 O que faz, nesta ordem:
 
 1. Instala o `caelestia-cli` com `paru` ou `yay`, se o comando `caelestia` ainda não existe.
 2. Roda `caelestia install`, o instalador oficial. Ele é **interativo** (pergunta, por exemplo, se quer fazer backup da config e quais componentes instalar) e é ele quem instala o shell e coloca a config do Hyprland em `~/.config/hypr`. **Por isso o repo não precisa carregar essa pasta** (a `.config/hypr/` do repo tem os valores padrão do Caelestia, como terminal `foot` e teclado `us`, e nenhum dos seus atalhos; e o próprio Caelestia manda não editar o `~/.config/hypr`, porque isso dá conflito nas atualizações).
-3. Copia `.config/caelestia/hypr-vars.lua` e `hypr-user.lua` para `~/.config/caelestia/`, **depois** do instalador. Um arquivo que já existe e difere do repo vira `<nome>.bak-<data>_<hora>`; um igual fica como está.
+3. Copia `hypr-vars.lua`, `hypr-user.lua` e `shell.json` de `.config/caelestia/` para `~/.config/caelestia/`, **depois** do instalador. Um arquivo que já existe e difere do repo vira `<nome>.bak-<data>_<hora>`; um igual fica como está.
 
-O Caelestia lê esses dois arquivos por cima da config dele: o `hypr-vars.lua` devolve uma tabela que é mesclada sobre o `variables.lua` padrão (só entra o que difere), e o `hypr-user.lua` é carregado por último. O que está nos seus:
+O Caelestia lê esses arquivos por cima da config dele: o `hypr-vars.lua` devolve uma tabela que é mesclada sobre o `variables.lua` padrão (só entra o que difere), o `hypr-user.lua` é carregado por último e o `shell.json` configura o shell. O que está nos seus:
 
-| O que | Atalho | Onde |
-| ----- | ------ | ---- |
-| Terminal `kitty` | Super+Enter (o padrão do Caelestia é Super+T) | `hypr-vars.lua` |
-| Navegador `zen-browser` (com `flock`, para não abrir duas janelas) | Super+W (padrão) | `hypr-vars.lua` |
-| Editor `kitty micro` | Super+Alt+C | `hypr-vars.lua` |
-| Claude (`claude-desktop`) | Super+C | `hypr-user.lua` |
-| Teclado `br` (ABNT2) e mouse sem aceleração (`flat`) | | `hypr-user.lua` |
+| Arquivo | O que muda em relação ao padrão do Caelestia |
+| ------- | -------------------------------------------- |
+| `hypr-vars.lua` | Terminal em Super+Enter (o padrão é Super+T; o terminal continua o padrão do Caelestia, `foot`); navegador `zen-browser` com `flock`, para não abrir duas janelas |
+| `hypr-user.lua` | Mouse sem aceleração (`flat`), teclado `br` e o monitor `eDP-1` fixo em 1920x1080@60, posição 0x0, escala 1 |
+| `shell.json` | Transparência ligada e o logo `/home/gustavo/Pictures/CachyOS.svg` |
 
-- **O script não instala** `claude-desktop`, `zen-browser`, `kitty` nem `micro`: sem o `claude-desktop`, o Super+C não faz nada. O "Setup completo" instala `kitty` e `micro`; o `caelestia install` pergunta pelo componente `zen`.
+- **Dependem da sua máquina:** o monitor `eDP-1` (a tela interna do notebook; numa máquina sem esse nome a regra não faz efeito) e o logo, que aponta para um arquivo que **não está no repo** (`/home/gustavo/Pictures/CachyOS.svg`); sem ele, o logo do shell não aparece.
+- **O script não instala** o `zen-browser`: o `caelestia install` pergunta pelo componente `zen`; confira que o navegador está instalado, senão o Super+W não abre nada.
 - **Vale a partir da próxima sessão do Hyprland:** saia e entre de novo.
-- **Para mudar um atalho**, edite o `.config/caelestia/hypr-vars.lua` do repo (os nomes das chaves são os do `variables.lua` do Caelestia; uma chave errada é ignorada em silêncio, e o teste confere isso) e rode `bash caelestia-setup.sh --so-atalhos`.
+- **Para mudar algo**, edite o arquivo em `.config/caelestia/` do repo e rode `bash caelestia-setup.sh --so-atalhos`. Os nomes das chaves do `hypr-vars.lua` são os do `variables.lua` do Caelestia: uma chave errada é ignorada em silêncio, e o teste confere isso.
 - **Testes:** `bash tests/caelestia.test.sh`.
 
 ## Backup do Termux
@@ -570,7 +569,7 @@ Dois scripts em `Termux/`, escritos em zsh e que precisam de `zstd` e `pv` (`pkg
 - O `emerge` (Gentoo) ainda não é suportado.
 - O `nvidia.sh` foi testado só com cenários simulados, sem hardware NVIDIA no desenvolvimento; só o Arch tem execução real prevista (Fedora, Ubuntu e Debian ficam em `--dry-run`). Rode `./nvidia.sh install --dry-run` e leia o plano antes de instalar.
 - O `oxwm-setup.sh` só funciona em Arch e derivadas (usa `paru` ou `yay` e o AUR), é para X11 e o `config.lua` espera o wallpaper e o `claude-desktop` do seu usuário.
-- O `caelestia-setup.sh` nunca rodou de verdade (sem Arch, `paru` nem Hyprland no desenvolvimento): foi testado com `pacman`, `paru` e `caelestia` de mentira, e os dois `.lua` só foram carregados contra uma API `hl` de mentira. O `caelestia install` não tem opção documentada para rodar sem perguntas, então o script o deixa interativo. Só Arch e derivadas (fora delas, instale o Caelestia à mão e use `--so-atalhos`).
+- O `caelestia-setup.sh` nunca rodou de verdade (sem Arch, `paru` nem Hyprland no desenvolvimento): foi testado com `pacman`, `paru` e `caelestia` de mentira, e os dois `.lua` só foram carregados contra uma API `hl` de mentira (o `shell.json` só teve o JSON validado). O `caelestia install` não tem opção documentada para rodar sem perguntas, então o script o deixa interativo. Só Arch e derivadas (fora delas, instale o Caelestia à mão e use `--so-atalhos`).
 - O `Backup-Restore.sh` procura por padrão um nome diferente do que o `Backup_Termux.sh` gera (veja "Backup do Termux").
 - Os dotfiles são baixados de `raw.githubusercontent.com` sem checksum, e da `main` por padrão (`DOTFILES_REF` fixa um commit). Sem rede para o GitHub o setup não aplica os dotfiles; só o aviso aparece.
 - O `setup.sh` não copia o `Termux/.zsh_history` nem os temas `*.auto.conf` do Kitty; só `.zshrc`, `.p10k.zsh` e o `kitty.conf`.

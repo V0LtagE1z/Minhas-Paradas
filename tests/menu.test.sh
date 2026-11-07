@@ -123,8 +123,8 @@ remote 'j\n\n\n\nq'
 remote 'jjj\ns\nq';      [[ $(fetched) == "mirrors.sh setup.sh " ]]    || { echo "FALHOU: mirrors devia baixar mirrors.sh e setup.sh, baixou: $(fetched)"; fail=1; }
 remote 'jjjjjjjj\ns\nq'; [[ $(fetched) == "config.lua oxwm-setup.sh " ]] || { echo "FALHOU: OXWM devia baixar oxwm-setup.sh e config.lua, baixou: $(fetched)"; fail=1; }
 grep -qx "$raw/main/.config/oxwm/config.lua" "$tmp/curl.log" || { echo "FALHOU: o config.lua do OXWM devia vir de .config/oxwm/ (baixou: $(cat "$tmp/curl.log" | tr '\n' ' '))"; fail=1; }
-# O Caelestia usa os dois .lua de .config/caelestia/: vêm junto; nada além disso.
-remote 'jjjjjjjjj\ns\nq'; [[ $(fetched) == "caelestia-setup.sh hypr-user.lua hypr-vars.lua " ]] || { echo "FALHOU: Caelestia devia baixar o script e os 2 .lua, baixou: $(fetched)"; fail=1; }
+# O Caelestia usa os três arquivos de .config/caelestia/ (2 .lua e o shell.json): vêm junto; nada além disso.
+remote 'jjjjjjjjj\ns\nq'; [[ $(fetched) == "caelestia-setup.sh hypr-user.lua hypr-vars.lua shell.json " ]] || { echo "FALHOU: Caelestia devia baixar o script e os 3 arquivos, baixou: $(fetched)"; fail=1; }
 grep -qx "$raw/main/.config/caelestia/hypr-vars.lua" "$tmp/curl.log" || { echo "FALHOU: hypr-vars.lua devia vir de .config/caelestia/ (baixou: $(tr '\n' ' ' < "$tmp/curl.log"))"; fail=1; }
 # Download que falha: erro claro, o menu continua (não cai), nada roda e nada sobra em disco.
 remote 'j\n\nq' FAKE_FAIL=1
