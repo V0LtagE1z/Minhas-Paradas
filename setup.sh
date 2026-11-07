@@ -26,7 +26,8 @@
 #   2. cria o usuário "gustavo" (home /home/gustavo, shell zsh, grupos wheel/audio/video)
 #      e troca o shell do root para zsh;
 #   3. dá sudo a ele e pede a senha dele;
-#   4. executa o setup tradicional (paru, oh-my-zsh, p10k, dotfiles, Kitty, fontes) COMO esse usuário.
+#   4. executa o setup tradicional (paru, oh-my-zsh, p10k, dotfiles, Kitty, wallpapers, fontes) COMO esse usuário;
+#      os wallpapers do repo (pasta Wallpapers/) vão para Imagens/Wallpapers ou Pictures/Wallpapers, a que o usuário tiver.
 # Distros em proot: rode como root. O script
 #   1. ajusta o pacman (só se a distro usar pacman; no Arch Linux ARM ranqueia os mirrors) e instala os pacotes do sistema;
 #   2. cria o usuário "gustavo" (home /home/gustavo, shell zsh, grupos wheel/audio/video), instala o sudo
@@ -194,6 +195,8 @@ DIR_TERMUX="Termux"
 DIR_DISTRO="Distro Normal"
 DIR_PROOT="Distro Proot"
 DIR_KITTY=".config/kitty"
+DIR_WALLPAPERS="Wallpapers"
+WALLPAPER_EXT='\.(jpe?g|png|webp|gif|bmp|avif|tiff?)$'   # só estas extensões contam como wallpaper (sem diferenciar maiúsculas)
 
 # Arquivos de cada subpasta que serão copiados para o $HOME.
 DOTFILES_TERMUX=(.zshrc .p10k.zsh)
@@ -246,6 +249,7 @@ INITRAMFS_HOOKS_DIR="${INITRAMFS_HOOKS_DIR:-/usr/share/initramfs-tools/hooks}"
 REVERT_MC=0   # 1 = --reverter-temas
 MIRRORS_ONLY=0   # 1 = --mirrors (só reranqueia os mirrors; é o que o mirrors.sh chama)
 DOTFILES_ONLY=0 # 1 = --dotfiles (só copia os dotfiles para o HOME de quem roda)
+WALLPAPERS_ONLY=0 # 1 = --wallpapers (só copia os wallpapers para Imagens/Pictures de quem roda)
 NO_EXIT=0        # 1 = --sem-encerrar (não pergunta se encerra a sessão; é o que o menu.sh usa)
 
 # ─── Utilidades ───────────────────────────────────────────────────────────────
@@ -332,6 +336,7 @@ Uso: bash setup.sh [--dry-run]
   --reverter-temas        desfaz os temas Minecraft (GRUB + Plymouth) e sai; não faz mais nada
   --mirrors               só ranqueia os mirrors de novo (como FORCE_MIRRORS=1) e sai; o mesmo que bash mirrors.sh
   --dotfiles              só aplica os dotfiles (.zshrc, .p10k.zsh, kitty.conf) no HOME de quem roda, com backup .bak; sem pacotes, sem usuário
+  --wallpapers            só copia a pasta Wallpapers/ do repo para Imagens/Wallpapers ou Pictures/Wallpapers (a pasta de imagens que o sistema usa) de quem roda; não sobrescreve
   --clonar-repo           pega os dotfiles clonando o repo em REPO_DIR, em vez de baixar só os arquivos necessários
   --cachyos-repo          instala os repositórios do CachyOS mesmo em derivadas fora da lista automática
   --sem-cachyos-repo      não instala os repositórios do CachyOS
@@ -377,6 +382,7 @@ parse_args() {
       --reverter-temas)       REVERT_MC=1 ;;
       --mirrors)              MIRRORS_ONLY=1; FORCE_MIRRORS=1 ;;
       --dotfiles)             DOTFILES_ONLY=1 ;;
+      --wallpapers)           WALLPAPERS_ONLY=1 ;;
       --clonar-repo)          DOTFILES_CLONE=1 ;;
       --sem-encerrar)         NO_EXIT=1 ;;
       --cachyos-repo)         CACHYOS_REPO=1 ;;
@@ -2101,6 +2107,63 @@ deploy_kitty() {
   if dotfile_src "$DIR_KITTY/kitty.conf"; then backup_and_copy "$DOT_SRC" "$HOME/.config/kitty/kitty.conf"; fi
 }
 
+# Pasta de imagens do usuário: a do XDG, se já configurada (sem configuração o xdg-user-dir devolve o próprio $HOME);
+# senão Imagens ou Pictures, a que existir; senão Imagens se o sistema está em português (o locale que este script grava),
+# ou Pictures. Assim não cria Pictures num sistema pt_BR, onde o xdg-user-dirs criaria Imagens no primeiro login.
+pictures_dir() {
+  local d l
+  d=$(xdg-user-dir PICTURES 2>/dev/null || true); d=${d%/}
+  if [[ -n $d && $d != "${HOME%/}" ]]; then printf '%s\n' "$d"; return 0; fi
+  if [[ -d $HOME/Imagens ]]; then printf '%s\n' "$HOME/Imagens"; return 0; fi
+  if [[ -d $HOME/Pictures ]]; then printf '%s\n' "$HOME/Pictures"; return 0; fi
+  l=$(sed -n 's/^\(export \)\{0,1\}LANG=//p' "$LOCALE_CONF_FILE" "$LOCALE_DEFAULT_FILE" "$PROFILE_LOCALE_FILE" 2>/dev/null \
+      | tr -d "\"'" | head -n1 || true)
+  l=${l:-${LC_ALL:-${LANG:-}}}
+  if [[ $l == pt* ]]; then printf '%s\n' "$HOME/Imagens"; else printf '%s\n' "$HOME/Pictures"; fi
+}
+
+# Nomes das imagens da pasta Wallpapers/ do repo, um por linha. Com o repo clonado lê a pasta; senão pergunta à API
+# do GitHub (os dotfiles não clonam, então não há como saber os nomes sem listar).
+# shortcut: sem jq, o nome sai da linha "name" do JSON; nome com aspas ou barra invertida não funciona, e a API sem
+#   token tem limite de 60 consultas por hora por IP, upgrade: jq / token, ou clonar com --clonar-repo.
+wallpaper_names() {
+  local slug json
+  if [[ -z $DOT_BASE ]]; then
+    local f n
+    for f in "$REPO_DIR/$DIR_WALLPAPERS"/*; do   # arquivo comum cujo nome, em minúsculas, termina numa extensão de imagem
+      n=${f##*/}
+      if [[ -f $f && ${n,,} =~ $WALLPAPER_EXT ]]; then printf '%s\n' "$n"; fi
+    done
+    return 0
+  fi
+  [[ $REPO_URL =~ ^https://github\.com/([^/]+/[^/]+)$ ]] || return 1
+  slug=${BASH_REMATCH[1]%.git}
+  json=$(fetch_file "https://api.github.com/repos/$slug/contents/$DIR_WALLPAPERS?ref=$DOTFILES_REF" /dev/stdout) || return 1
+  { sed -n 's/^ *"name": *"\(.*\)",$/\1/p' <<<"$json" | grep -iE "$WALLPAPER_EXT"; } || true
+}
+
+# Copia as imagens da pasta Wallpapers/ do repo para <Imagens|Pictures>/Wallpapers. Só em desktop com interface gráfica.
+# Não sobrescreve uma imagem que já existe (pode ser sua, com o mesmo nome).
+deploy_wallpapers() {
+  if ! has_linux_gui; then
+    ((WALLPAPERS_ONLY)) && log "wallpapers só em distro de desktop com interface gráfica; nada feito"
+    return 0
+  fi
+  local dest names n
+  dest="$(pictures_dir)/Wallpapers"
+  dotfiles_prepare
+  if ((DRY_RUN)); then log "baixaria as imagens de $DIR_WALLPAPERS/ do repo para $dest"; return 0; fi
+  if ! names=$(wallpaper_names); then
+    warn "não consegui listar $DIR_WALLPAPERS/ no repo (sem rede ou limite da API do GitHub?)"; FAILED+=("wallpapers"); return 0
+  fi
+  [[ -n $names ]] || { warn "nenhuma imagem em $DIR_WALLPAPERS/ no repo"; return 0; }
+  run mkdir -p "$dest"
+  while IFS= read -r n; do
+    if [[ -e $dest/$n ]]; then log "$dest/$n já existe, mantido"; continue; fi
+    if dotfile_src "$DIR_WALLPAPERS/$n"; then run cp "$DOT_SRC" "$dest/$n"; log "wallpaper: $dest/$n"; fi
+  done <<<"$names"
+}
+
 ensure_editor() {
   # Vai no ~/.zshenv (e não no .zshrc) para o .zshrc continuar idêntico ao do repo.
   # Se você preferir manter isso no repo, ponha o export no .zshrc e apague esta função.
@@ -2204,6 +2267,7 @@ run_user_steps() {
   install_zsh_stack
   deploy_dotfiles
   deploy_kitty
+  deploy_wallpapers
   ensure_editor
   set_default_shell
   termux_font
@@ -2665,14 +2729,15 @@ main() {
 
   # --dotfiles: só copia os dotfiles e o kitty.conf para o HOME de quem roda. Sem pacotes, usuário nem sudo:
   # supõe zsh, oh-my-zsh e powerlevel10k já instalados (o setup completo faz isso).
-  if ((DOTFILES_ONLY)); then
-    if [[ $EUID -eq 0 ]] && ((! PROOT && ! DRY_RUN)); then die "--dotfiles aplica no HOME de quem roda: rode como usuário normal (no proot, pode ser root)."; fi
-    deploy_dotfiles
-    deploy_kitty
+  # --wallpapers: só copia os wallpapers para Imagens/Pictures de quem roda (sozinho, ou junto com --dotfiles).
+  if ((DOTFILES_ONLY || WALLPAPERS_ONLY)); then
+    if [[ $EUID -eq 0 ]] && ((! PROOT && ! DRY_RUN)); then die "--dotfiles e --wallpapers aplicam no HOME de quem roda: rode como usuário normal (no proot, pode ser root)."; fi
+    if ((DOTFILES_ONLY)); then deploy_dotfiles; deploy_kitty; fi
+    if ((WALLPAPERS_ONLY)); then deploy_wallpapers; fi
     echo
     print_failed
     ((DRY_RUN)) && log "Simulação concluída: nada foi alterado."
-    hint_p10k
+    if ((DOTFILES_ONLY)); then hint_p10k; fi
     return 0
   fi
 

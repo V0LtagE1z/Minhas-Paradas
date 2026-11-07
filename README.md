@@ -8,18 +8,18 @@ Meus dotfiles de terminal em um script que monta tudo em uma máquina nova, seja
 
 | Caminho | Para que serve |
 | ------- | -------------- |
-| `setup.sh` | O script principal: cria o usuário `gustavo`, instala pacotes, locales, oh-my-zsh, powerlevel10k, plugins, Kitty e fontes e aplica os dotfiles. Funciona em distros de desktop, WSL, proot e Termux (veja "Gerenciadores e ambientes") |
+| `setup.sh` | O script principal: cria o usuário `gustavo`, instala pacotes, locales, oh-my-zsh, powerlevel10k, plugins, Kitty e fontes, aplica os dotfiles e copia os wallpapers. Funciona em distros de desktop, WSL, proot e Termux (veja "Gerenciadores e ambientes") |
 | `mirrors.sh` | Ranqueia os mirrors de novo, quando você quiser, sem refazer o resto. É só um atalho para `bash setup.sh --mirrors` (veja "Ranquear os mirrors de novo") |
 | `menu.sh` | Menu em tela cheia (TUI): escolhe o que rodar (setup, mirrors, NVIDIA, OXWM), pede "Tem certeza", executa o script e volta ao menu; também reinicia, desliga (não no Termux nem no proot) e fecha o terminal; roda também sem clonar, por `curl ... \| bash`, baixando só o script do item escolhido (veja "Menu") |
-| `tests/menu.test.sh` | Teste do `menu.sh` com scripts de mentira, teclas lidas de um arquivo e um `curl` de mentira (rota sem clone); não altera o sistema |
-| `tests/dotfiles.test.sh` | Teste do `setup.sh --dotfiles` com um `curl` de mentira que serve os arquivos desta pasta: confere as URLs, o que é baixado, o backup `.bak` e os erros; roda num `HOME` temporário |
+| `tests/menu.test.sh` | Teste do `menu.sh` com scripts de mentira, teclas lidas de um arquivo e um `curl` de mentira (rota sem clone); confere também que a caixa fica centrada; não altera o sistema |
+| `tests/dotfiles.test.sh` | Teste do `setup.sh --dotfiles` e `--wallpapers` com um `curl` de mentira que serve os arquivos desta pasta: confere as URLs, o que é baixado, o backup `.bak`, a pasta dos wallpapers (Imagens ou Pictures) e os erros; roda num `HOME` temporário |
 | `nvidia.sh` | Detecta a GPU NVIDIA e instala o driver (open, proprietário ou legado), com modeset, initramfs e PRIME. É independente do `setup.sh` (veja "nvidia.sh") |
 | `oxwm-setup.sh` | Instala a configuração do OXWM (gerenciador de janelas X11), migrada do Caelestia/Hyprland; lê o `.config/oxwm/config.lua` (veja "OXWM") |
 | `.config/` | Configs no formato do `~/.config`: `kitty/` (terminal Kitty e temas claro/escuro, só distros de desktop), `oxwm/` (`config.lua` do OXWM) e `hypr/` (Hyprland, ainda não usado pelos scripts) |
 | `Distro Normal/` | Dotfiles para distros Linux de desktop |
 | `Distro Proot/` | Dotfiles para distros rodando em proot (proot-distro) |
 | `Termux/` | Dotfiles do Termux e os scripts de backup e restauração (veja "Backup do Termux") |
-| `Wallpapers/` | `Luna E Terra.jpg`, papel de parede 1920 x 1280. O `setup.sh` não o aplica; o `config.lua` do OXWM o espera em `~/Pictures/Wallpapers/` |
+| `Wallpapers/` | `Luna E Terra.jpg`, papel de parede 1920 x 1280. O `setup.sh` copia a pasta inteira (só imagens) para `Imagens/Wallpapers` ou `Pictures/Wallpapers` (veja "Wallpapers"); o `config.lua` do OXWM o espera fixo em `/home/gustavo/Pictures/Wallpapers/` |
 
 Arquivos de cada pasta:
 
@@ -68,6 +68,7 @@ Só se precisar:
 ```
 bash setup.sh --dry-run                # mostra o que seria feito, sem alterar nada
 bash setup.sh --dotfiles               # só atualiza os dotfiles (veja "Só os dotfiles")
+bash setup.sh --wallpapers             # só copia os wallpapers para Imagens/Pictures (veja "Wallpapers")
 bash setup.sh --mirrors                # só ranqueia os mirrors de novo (veja "Ranquear os mirrors de novo")
 bash setup.sh --clonar-repo            # pega os dotfiles clonando o repo em ~/Minhas-Paradas
 bash setup.sh --help                   # lista todas as opções (veja "Opções e variáveis")
@@ -98,6 +99,7 @@ Opções de linha de comando (`bash setup.sh --help` lista todas):
 | ----- | --------- |
 | `--dry-run`, `-n` | Mostra o que seria feito sem alterar nada |
 | `--dotfiles` | Só aplica os dotfiles (`.zshrc`, `.p10k.zsh`, `kitty.conf`) no `HOME` de quem roda, com backup `.bak`; sem pacotes, sem usuário (veja "Só os dotfiles") |
+| `--wallpapers` | Só copia a pasta `Wallpapers/` do repo para `Imagens/Wallpapers` ou `Pictures/Wallpapers` do `HOME` de quem roda; não sobrescreve (veja "Wallpapers") |
 | `--clonar-repo` | Pega os dotfiles clonando o repo em `REPO_DIR`, em vez de baixar só os arquivos necessários |
 | `--temas-minecraft` / `--sem-temas-minecraft` | Instala os temas Minecraft sem perguntar / não instala e não pergunta |
 | `--reverter-temas` | Desfaz os temas Minecraft e sai |
@@ -143,7 +145,7 @@ Nas distros de desktop o script trabalha em duas fases:
    - grupos `wheel`, `audio` e `video` (o `wheel` é criado nas distros que não o têm, como o Debian);
    - sudo liberado por `/etc/sudoers.d/10-gustavo`, validado com `visudo` antes de instalar (a senha continua sendo exigida);
    - `passwd gustavo` para você escolher a senha. Se a senha já estiver definida, ela é mantida.
-2. **Como `gustavo`:** o script reexecuta a si mesmo e faz o setup tradicional (paru, oh-my-zsh, powerlevel10k, plugins, dotfiles, Kitty, `EDITOR` e fontes), tudo dentro de `/home/gustavo`.
+2. **Como `gustavo`:** o script reexecuta a si mesmo e faz o setup tradicional (paru, oh-my-zsh, powerlevel10k, plugins, dotfiles, Kitty, wallpapers, `EDITOR` e fontes), tudo dentro de `/home/gustavo`.
 
 No Arch/CachyOS, o `gustavo` recebe sudo **sem senha apenas durante a instalação do `paru`** (o `makepkg` precisa disso). O arquivo temporário `/etc/sudoers.d/99-setup-tmp` é removido assim que a fase termina, mesmo se ela falhar.
 
@@ -212,7 +214,7 @@ Um menu em tela cheia (TUI, em bash puro, sem instalar nada): caixas de bordas a
 - **"Tem certeza que deseja (ação)?"** Aparece um diálogo com os botões `Sim` e `Não`. O padrão é **Não**: `Enter` direto cancela. `←` `→` trocam o botão; `s` confirma; `n`, `q` e `Esc` cancelam. Simulações e a detecção da NVIDIA não perguntam. O `nvidia.sh install` pergunta de novo por conta própria.
 - **Termux e proot: Reiniciar e Desligar não aparecem**, porque lá não há o que reiniciar. O menu detecta pelo `PREFIX` do Termux, pelo kernel com `proot` no nome ou por o processo estar sob ptrace (que é o proot; um `strace`/`gdb` também esconde os itens). `FORCE_PROOT=1` força o modo proot, e `FORCE_PROOT=0` desliga a detecção por ptrace (mesmos nomes do `setup.sh`).
 - **WSL:** Reiniciar e Desligar aparecem, mas não fazem nada: mostram o comando certo, `wsl --shutdown`, para rodar no Windows (PowerShell ou CMD). Isso para todas as distros WSL; depois é só abrir a distro de novo.
-- **Visual:** a largura segue o terminal (de 36 a 72 colunas, então cabe no Termux em pé). `NO_COLOR=1` ou `TERM=dumb` desligam as cores e a limpeza de tela. O menu assume terminal UTF-8 (bordas e `❯`); o console do Linux sem fonte unicode mostra as bordas quebradas. Num sistema sem locale UTF-8 (rootfs mínimo) ele usa `C.UTF-8` só para contar as colunas direito.
+- **Visual:** a largura segue o terminal (de 36 a 72 colunas, então cabe no Termux em pé) e a caixa fica **centrada**, na horizontal e na vertical (terminal mais baixo que o menu: começa no topo; mais estreito que 36 colunas: sem margem). A posição é recalculada a cada tela desenhada, ou seja, a cada tecla; se você redimensionar a janela, o menu se ajusta na próxima tecla, não na hora. `NO_COLOR=1` ou `TERM=dumb` desligam as cores e a limpeza de tela. O menu assume terminal UTF-8 (bordas e `❯`); o console do Linux sem fonte unicode mostra as bordas quebradas. Num sistema sem locale UTF-8 (rootfs mínimo) ele usa `C.UTF-8` só para contar as colunas direito.
 - **O menu escolhe o script, não cada etapa dentro dele.** O `setup.sh` continua sendo um bloco só (pacotes, usuário, dotfiles...); quem quiser pular partes usa as opções e variáveis dele (`--help`).
 - **`--sem-encerrar`:** o `setup.sh` normalmente pergunta no fim "Deseja encerrar a sessão?" e fecha o shell que o chamou. Sob o menu esse shell seria o próprio menu, então o item de setup passa `--sem-encerrar` e a pergunta some; use "Fechar este terminal" quando quiser fechar o terminal.
 - **Precisa do bash.** Sem ele (Alpine, por exemplo) o menu avisa e mostra o comando de instalação do gerenciador que achar (`apk add bash`, `apt-get install -y bash`...), para rodar como root; depois é só `bash menu.sh`. Com o bash instalado, `sh menu.sh` já reexecuta sozinho em bash.
@@ -254,6 +256,21 @@ Baixa só os arquivos do seu ambiente (o mesmo conjunto da etapa 6 e 7 de "O que
 - **Rode como o usuário que vai usar os arquivos.** Como root o script recusa, exceto no proot (onde o root também recebe os dotfiles). `--dry-run` é aceito como root.
 - **Um arquivo que falha ao baixar** (sem rede, ref inexistente) gera um aviso com a URL e aparece na lista de falhas no fim; o arquivo que já estava no `HOME` não é tocado.
 - `--clonar-repo` clona o repo em `REPO_DIR` e copia de lá, em vez de baixar arquivo por arquivo.
+
+## Wallpapers
+
+```bash
+bash setup.sh --wallpapers            # só copia os wallpapers
+bash setup.sh --wallpapers --dry-run  # só mostra o destino
+```
+
+O setup completo (como `gustavo`) e `--wallpapers` copiam as imagens da pasta `Wallpapers/` do repo para `<Imagens|Pictures>/Wallpapers` do `HOME` de quem roda. Só em distros de desktop com interface gráfica; no WSL, no proot e no Termux não faz nada.
+
+- **Qual pasta.** A que o `xdg-user-dir PICTURES` informa, se ela já foi configurada. Senão `~/Imagens` ou `~/Pictures`, a que existir. Se nenhuma existe, `Imagens` quando o idioma do sistema é português e `Pictures` nos demais casos. O idioma vem do `LANG` de `/etc/locale.conf`, `/etc/default/locale` ou `/etc/profile.d/10-setup-locale.sh` (o `locale.conf` é onde o próprio script grava `pt_BR`) e, sem nenhum deles, do `LANG` da sessão; o arquivo do sistema vence o `LANG` da sessão.
+- **Só imagens** (`jpg`, `jpeg`, `png`, `webp`, `gif`, `bmp`, `avif`, `tif`, `tiff`, em maiúscula ou minúscula). Texto e subpastas da pasta `Wallpapers/` são ignorados.
+- **Não sobrescreve.** Imagem com o mesmo nome que já está lá fica como está (diferente dos dotfiles, aqui não há backup `.bak`: o arquivo pode ser seu e grande).
+- **Sem clonar:** o script lista a pasta pela API do GitHub (`api.github.com`) e baixa cada imagem de `raw.githubusercontent.com`. Sem token, a API limita a 60 consultas por hora por IP; se estourar, aparece um aviso, a falha entra na lista do fim e o resto do setup segue. Com `--clonar-repo`, lê a pasta do clone. `DOTFILES_REF` vale também aqui.
+- **OXWM:** o `config.lua` dele fixa `/home/gustavo/Pictures/Wallpapers/Luna E Terra.jpg`. Num sistema em português que use `Imagens`, o OXWM não acha a imagem; ajuste o caminho no `config.lua` ou crie `Pictures` antes de rodar o setup.
 
 ## Ranquear os mirrors de novo
 
@@ -385,7 +402,7 @@ Nas distros de desktop, as etapas 1 a 3 rodam como root; depois o script cria o 
    - Termux: `Termux/.zshrc` e `Termux/.p10k.zsh`.
    - Proot: `Distro Proot/.zshrc` e `.p10k.zsh`.
    - Distros de desktop: `Distro Normal/.zshrc`, `.p10k.zsh` e `.p10k-ascii.zsh`.
-7. **Só em distros:** baixa e copia `.config/kitty/kitty.conf` para `~/.config/kitty/kitty.conf`.
+7. **Só em distros:** baixa e copia `.config/kitty/kitty.conf` para `~/.config/kitty/kitty.conf` e copia os wallpapers (seção "Wallpapers").
 8. Define `EDITOR` e `VISUAL` como `micro` em `~/.zshenv`, se ainda não estiverem definidos.
 9. Troca o shell padrão para o zsh. Nas distros de desktop e no proot isso já foi feito com `usermod -s` para o `gustavo` e para o root.
 10. Instala a fonte MesloLGS NF:
