@@ -2,6 +2,33 @@
 
 Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto não usa versões, então as entradas são por data.
 
+## Não lançado (branch `caelestia-setup`, a partir da `main`)
+
+### 2026-11-07
+
+#### Adicionado
+
+- **`caelestia-setup.sh`: instala o Caelestia e aplica os seus atalhos.** Só Arch e derivadas. Instala o `caelestia-cli` (AUR, com `paru` ou `yay`) se o comando `caelestia` não existe, roda o instalador oficial `caelestia install` (interativo) e depois copia `.config/caelestia/hypr-vars.lua` e `hypr-user.lua` para `~/.config/caelestia/`. Arquivo existente que difere vira `<nome>.bak-<data>_<hora>`; igual, fica como está. Opções: `--so-atalhos` (só copia os dois arquivos, sem instalar nada) e `--dry-run`/`-n`. Confere os dois `.lua` antes de instalar qualquer coisa.
+- **A sua config, em `.config/caelestia/`** (os arquivos reais que você commitou na `main`: `hypr-vars.lua`, `hypr-user.lua` e `shell.json`; o script copia os três). `hypr-vars.lua`: `kbTerminal = "SUPER + RETURN"` e o navegador `flock -n /tmp/zen.lock zen-browser || true`. `hypr-user.lua`: mouse `flat`, teclado `br` e o monitor `eDP-1` em 1920x1080@60. `shell.json`: transparência ligada e o logo `/home/gustavo/Pictures/CachyOS.svg`. Uma primeira versão minha desses arquivos (kitty, editor em Super+Alt+C, Claude em Super+C) era reconstruída de memória e foi descartada; vale a sua. O arquivo vazio `.config/caelestia/w`, que veio da `main`, não é copiado.
+- **`caelestia-setup.sh` baixa o logo do shell.** O `shell.json` usa `/home/gustavo/Pictures/CachyOS.svg`, que não estava no repo: o script baixa o SVG (`https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/cachyos/default.svg`, com `curl` ou `wget`) para `~/Pictures/CachyOS.svg` se ainda não existe. Falhar só avisa. Limites (marcados no script com `shortcut:`): a URL usa `@main`, que muda, e o `shell.json` fixa `/home/gustavo`, então o logo só aparece no usuário `gustavo`.
+- **`menu.sh`: item "Caelestia: instalar + atalhos"** (com "Tem certeza"). Na rota sem clone (`curl | bash`) baixa o script e os três arquivos de `.config/caelestia/`; nada além disso.
+- **`tests/caelestia.test.sh`.** `pacman`, `paru` e `caelestia` de mentira num `HOME` temporário: ordem das chamadas (paru, install, atalhos), backup do arquivo que o instalador deixa, `--so-atalhos`, caelestia já instalado, sem helper, sem pacman, arquivo faltando, opção desconhecida, `--dry-run` e o logo (baixado uma vez só, sem criar nada no `--dry-run`, e com o download falho só avisa e apaga o arquivo parcial). Valida o `shell.json` como JSON e, com o `lupa`, carrega os dois `.lua` contra uma API `hl` de mentira e confere os valores. Não confere os nomes das chaves do `hypr-vars.lua` (uma chave errada o Caelestia ignora em silêncio): isso era feito contra o `variables.lua` da `.config/hypr/`, que foi apagada.
+
+#### Alterado
+
+- `tests/menu.test.sh`: o item novo desloca Reiniciar e Desligar (índices 10 e 11), a margem de cima do menu centrado (8 linhas em 100x40) e ganha dois testes (item local e rota remota com os três arquivos).
+- README: seção "Caelestia", tabela de arquivos, tabela do menu, rota sem clone, testes e limitações; sem a `.config/hypr/`, que você apagou.
+
+#### Removido
+
+- `.config/hypr/` (18 arquivos, apagados por você): o `caelestia install` já coloca essa config e ela não tinha nenhum dos seus atalhos.
+
+#### Testado e não testado
+
+- **Testado:** `bash -n` e `shellcheck` (sem avisos) nos arquivos novos e no `menu.sh`; `tests/caelestia.test.sh`, `tests/menu.test.sh` e `tests/dotfiles.test.sh`. Os testes novos foram validados com mutantes (um defeito inserido de propósito em cada comportamento faz o teste falhar: backup, ordem, checagem do pacman, `caelestia` já instalado, chave com nome errado, JSON quebrado, monitor, dependências do menu remoto, item do menu, logo baixado de novo e arquivo parcial do logo).
+- **Não testado:** nada num Arch de verdade, com `paru`, com o `caelestia install` real nem com o Hyprland carregando os dois `.lua` (a API `hl` do teste é de mentira). O `kb_variant = ",abnt2"` do seu `hypr-user.lua` tem uma vírgula na frente; não mexi (o `br` puro já é ABNT2, então deve dar no mesmo). A URL do logo (jsDelivr) não foi aberta: o ambiente de desenvolvimento a bloqueia; se o download falhar, o script só avisa. O `caelestia install` não tem opção documentada para rodar sem perguntas, então fica interativo.
+- **Não mexi:** nos seus arquivos de `.config/caelestia/`.
+
 ## Não lançado (branch `oxwm-wallpaper-imagens`, a partir da `menu-centralizado-wallpapers`)
 
 ### 2026-11-07

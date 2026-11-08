@@ -92,7 +92,11 @@ no_power() {  # Termux e proot não têm o que reiniciar/desligar: os itens some
 run_script() {  # script [args...] — roda como filho: um die/exit do script não derruba o menu
   local s=$1 rc; shift
   local -a deps=("$s")
-  case $s in mirrors.sh) deps+=(setup.sh) ;; oxwm-setup.sh) deps+=(.config/oxwm/config.lua) ;; esac   # o que o script usa ao lado
+  case $s in   # o que o script usa ao lado
+    mirrors.sh) deps+=(setup.sh) ;;
+    oxwm-setup.sh) deps+=(.config/oxwm/config.lua) ;;
+    caelestia-setup.sh) deps+=(.config/caelestia/hypr-vars.lua .config/caelestia/hypr-user.lua .config/caelestia/shell.json) ;;
+  esac
   need "${deps[@]}" || return 0
   [[ -f $DIR/$s ]] || { echo "[erro] não achei $DIR/$s"; return; }
   # stdin = terminal: no "curl | bash" o stdin é o pipe, e setup.sh/nvidia.sh recusam rodar sem terminal ([[ -t 0 ]])
@@ -134,6 +138,7 @@ add "NVIDIA: detectar GPU"     "Detecta a GPU e o ambiente|(só leitura)"       
 add "NVIDIA: instalar driver"  "Instala o driver NVIDIA|(Arch real; demais: dry-run)"         "instalar o driver NVIDIA"     "run_script nvidia.sh install"
 add "NVIDIA: simular instalação" "Mostra o plano da instalação|sem alterar nada"              ""                             "run_script nvidia.sh install --dry-run"
 add "OXWM: instalar configuração" "Instala a configuração do OXWM|(X11; Arch e derivadas)"    "instalar a config. do OXWM"   "run_script oxwm-setup.sh"
+add "Caelestia: instalar + atalhos" "Instala o Caelestia e aplica sua|config e atalhos (Arch; AUR)"  "instalar o Caelestia"         "run_script caelestia-setup.sh"
 NINST=${#LBL[@]}
 if ! no_power; then
   is_wsl && { c_reb=""; c_off=""; } || { c_reb="reiniciar o computador"; c_off="desligar o computador"; }   # no WSL só aparece o aviso

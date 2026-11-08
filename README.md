@@ -10,12 +10,14 @@ Meus dotfiles de terminal em um script que monta tudo em uma máquina nova, seja
 | ------- | -------------- |
 | `setup.sh` | O script principal: cria o usuário `gustavo`, instala pacotes, locales, oh-my-zsh, powerlevel10k, plugins, Kitty e fontes, aplica os dotfiles e copia os wallpapers. Funciona em distros de desktop, WSL, proot e Termux (veja "Gerenciadores e ambientes") |
 | `mirrors.sh` | Ranqueia os mirrors de novo, quando você quiser, sem refazer o resto. É só um atalho para `bash setup.sh --mirrors` (veja "Ranquear os mirrors de novo") |
-| `menu.sh` | Menu em tela cheia (TUI): escolhe o que rodar (setup, mirrors, NVIDIA, OXWM), pede "Tem certeza", executa o script e volta ao menu; também reinicia, desliga (não no Termux nem no proot) e fecha o terminal; roda também sem clonar, por `curl ... \| bash`, baixando só o script do item escolhido (veja "Menu") |
+| `menu.sh` | Menu em tela cheia (TUI): escolhe o que rodar (setup, mirrors, NVIDIA, OXWM, Caelestia), pede "Tem certeza", executa o script e volta ao menu; também reinicia, desliga (não no Termux nem no proot) e fecha o terminal; roda também sem clonar, por `curl ... \| bash`, baixando só o script do item escolhido (veja "Menu") |
 | `tests/menu.test.sh` | Teste do `menu.sh` com scripts de mentira, teclas lidas de um arquivo e um `curl` de mentira (rota sem clone); confere também que a caixa fica centrada; não altera o sistema |
+| `tests/caelestia.test.sh` | Teste do `caelestia-setup.sh` com `pacman`, `paru` e `caelestia` de mentira num `HOME` temporário (ordem das chamadas, backup, `--so-atalhos`, erros) e dos dois `.lua`, carregados com o `lupa` (Python) contra uma API `hl` de mentira; não instala nada |
 | `tests/dotfiles.test.sh` | Teste do `setup.sh --dotfiles` e `--wallpapers` com um `curl` de mentira que serve os arquivos desta pasta: confere as URLs, o que é baixado, o backup `.bak`, a pasta dos wallpapers (Imagens ou Pictures) e os erros; roda num `HOME` temporário |
 | `nvidia.sh` | Detecta a GPU NVIDIA e instala o driver (open, proprietário ou legado), com modeset, initramfs e PRIME. É independente do `setup.sh` (veja "nvidia.sh") |
+| `caelestia-setup.sh` | Instala o Caelestia (shell + Hyprland) com o instalador oficial e aplica a sua config, copiando `.config/caelestia/` (`hypr-vars.lua`, `hypr-user.lua` e `shell.json`; veja "Caelestia") |
 | `oxwm-setup.sh` | Instala a configuração do OXWM (gerenciador de janelas X11), migrada do Caelestia/Hyprland; lê o `.config/oxwm/config.lua` (veja "OXWM") |
-| `.config/` | Configs no formato do `~/.config`: `kitty/` (terminal Kitty e temas claro/escuro, só distros de desktop), `oxwm/` (`config.lua` do OXWM) e `hypr/` (Hyprland, ainda não usado pelos scripts) |
+| `.config/` | Configs no formato do `~/.config`: `kitty/` (terminal Kitty e temas claro/escuro, só distros de desktop), `oxwm/` (`config.lua` do OXWM) e `caelestia/` (a sua config do Caelestia, usada pelo `caelestia-setup.sh`) |
 | `Distro Normal/` | Dotfiles para distros Linux de desktop |
 | `Distro Proot/` | Dotfiles para distros rodando em proot (proot-distro) |
 | `Termux/` | Dotfiles do Termux e os scripts de backup e restauração (veja "Backup do Termux") |
@@ -207,6 +209,7 @@ Um menu em tela cheia (TUI, em bash puro, sem instalar nada): caixas de bordas a
 | NVIDIA: instalar driver | `nvidia.sh install` | sim |
 | NVIDIA: simular instalação | `nvidia.sh install --dry-run` | não |
 | OXWM: instalar configuração | `oxwm-setup.sh` | sim |
+| Caelestia: instalar + atalhos | `caelestia-setup.sh` (veja "Caelestia") | sim |
 | Reiniciar, Desligar | `reboot`, `poweroff` (com `sudo` ou `doas`) | sim (no WSL, não: veja abaixo) |
 | Fechar este terminal | Manda SIGHUP ao shell que chamou o menu. Se o menu foi chamado por `sudo`, não acha o shell com segurança e pede para você digitar `exit` | sim |
 | Sair do menu | Sai só do menu; o terminal continua aberto | não |
@@ -218,8 +221,8 @@ Um menu em tela cheia (TUI, em bash puro, sem instalar nada): caixas de bordas a
 - **O menu escolhe o script, não cada etapa dentro dele.** O `setup.sh` continua sendo um bloco só (pacotes, usuário, dotfiles...); quem quiser pular partes usa as opções e variáveis dele (`--help`).
 - **`--sem-encerrar`:** o `setup.sh` normalmente pergunta no fim "Deseja encerrar a sessão?" e fecha o shell que o chamou. Sob o menu esse shell seria o próprio menu, então o item de setup passa `--sem-encerrar` e a pergunta some; use "Fechar este terminal" quando quiser fechar o terminal.
 - **Precisa do bash.** Sem ele (Alpine, por exemplo) o menu avisa e mostra o comando de instalação do gerenciador que achar (`apk add bash`, `apt-get install -y bash`...), para rodar como root; depois é só `bash menu.sh`. Com o bash instalado, `sh menu.sh` já reexecuta sozinho em bash.
-- **Rode como usuário normal.** O `setup.sh` e o `oxwm-setup.sh` pedem `sudo` sozinhos; o `nvidia.sh` recusa root.
-- **Testes:** `bash tests/menu.test.sh` (scripts de mentira, respostas por arquivo) e `bash tests/dotfiles.test.sh`.
+- **Rode como usuário normal.** O `setup.sh`, o `oxwm-setup.sh` e o `caelestia-setup.sh` pedem `sudo` sozinhos; o `nvidia.sh` recusa root.
+- **Testes:** `bash tests/menu.test.sh` (scripts de mentira, respostas por arquivo), `bash tests/dotfiles.test.sh` e `bash tests/caelestia.test.sh`.
 
 ### Rodar sem clonar (`curl | bash`)
 
@@ -229,7 +232,7 @@ curl -fsSL https://raw.githubusercontent.com/V0LtagE1z/Minhas-Paradas/main/menu.
 
 Abre o mesmo menu numa máquina nova, sem `git clone` antes.
 
-- **Como funciona.** Se não há um `setup.sh` ao lado do menu (é o caso do `curl | bash`, e também de um `menu.sh` baixado sozinho), ele **não baixa nada ao abrir**: quando você escolhe um item, baixa só o script dele de `raw.githubusercontent.com` (com `curl` ou, se não houver, `wget`; **sem `git` e sem `tar`**) para uma pasta temporária (`$TMPDIR`, ou `/tmp`) e **apaga a pasta ao sair**. O que o script usa ao lado vem junto: o `mirrors.sh` traz o `setup.sh`, e o `oxwm-setup.sh` traz o `.config/oxwm/config.lua`. Cada arquivo é baixado uma vez por sessão. Rodando de um clone, nada disso acontece.
+- **Como funciona.** Se não há um `setup.sh` ao lado do menu (é o caso do `curl | bash`, e também de um `menu.sh` baixado sozinho), ele **não baixa nada ao abrir**: quando você escolhe um item, baixa só o script dele de `raw.githubusercontent.com` (com `curl` ou, se não houver, `wget`; **sem `git` e sem `tar`**) para uma pasta temporária (`$TMPDIR`, ou `/tmp`) e **apaga a pasta ao sair**. O que o script usa ao lado vem junto: o `mirrors.sh` traz o `setup.sh`, o `oxwm-setup.sh` traz o `.config/oxwm/config.lua` e o `caelestia-setup.sh` traz os três arquivos de `.config/caelestia/`. Cada arquivo é baixado uma vez por sessão. Rodando de um clone, nada disso acontece.
 - **Fixar a versão.** Por padrão baixa a `main`, ou seja, o que estiver lá na hora. Para fixar, use um commit (ou tag) **na URL e em `MENU_REF`**, os dois iguais, porque a URL traz o `menu.sh` e `MENU_REF` traz o resto (os scripts e, por `DOTFILES_REF`, os dotfiles):
 
   ```bash
@@ -521,6 +524,40 @@ Sempre, também com `--sem-sistema`: copia o `config.lua` para `~/.config/oxwm/`
 
 O `config.lua` usa Super como tecla principal, tags 1 a 8 normais e 9 a 12 "especiais" (`mus`, `com`, `todo`, `sys`: música, comunicação, tarefas e monitor do sistema). Como o OXWM não tem scratchpad, os especiais são tags comuns alternadas por atalho (Super+M, D, R e Ctrl+Shift+Esc). Super+C abre o app do Claude (`claude-desktop`), Super+Shift+R recarrega a configuração, e o wallpaper (`feh`) é o `Luna E Terra.jpg`, procurado em `~/Pictures/Wallpapers/` e depois em `~/Imagens/Wallpapers/` (o `setup.sh` copia para lá; veja "Wallpapers"). Para outra imagem, ajuste a variável `wallpaper` (caminho relativo a essas pastas).
 
+## Caelestia
+
+`caelestia-setup.sh` instala o [Caelestia](https://github.com/caelestia-dots/caelestia) (shell + Hyprland) e aplica a sua config. Só para Arch e derivadas: precisa de `paru` ou `yay` (o `caelestia-cli` vem do AUR; o "Setup completo" do menu instala o `paru`). Os arquivos de `.config/caelestia/` têm que estar **ao lado** do script (como no repo).
+
+```
+bash caelestia-setup.sh [--so-atalhos] [--dry-run]
+```
+
+| Opção | O que faz |
+| ----- | --------- |
+| `--so-atalhos` | Não instala nada: só copia `hypr-vars.lua`, `hypr-user.lua` e `shell.json` para `~/.config/caelestia/`. Serve para reaplicar depois de editar, ou numa máquina que já tem o Caelestia |
+| `--dry-run`, `-n` | Mostra o que seria feito (linhas `[dry]`) sem alterar nada |
+
+O que faz, nesta ordem:
+
+1. Instala o `caelestia-cli` com `paru` ou `yay`, se o comando `caelestia` ainda não existe.
+2. Roda `caelestia install`, o instalador oficial. Ele é **interativo** (pergunta, por exemplo, se quer fazer backup da config e quais componentes instalar) e é ele quem instala o shell e coloca a config do Hyprland em `~/.config/hypr`. **Por isso o repo não carrega essa pasta**: o próprio Caelestia manda não editar o `~/.config/hypr` (dá conflito nas atualizações), e só os seus overrides entram em `.config/caelestia/`.
+3. Copia `hypr-vars.lua`, `hypr-user.lua` e `shell.json` de `.config/caelestia/` para `~/.config/caelestia/`, **depois** do instalador. Um arquivo que já existe e difere do repo vira `<nome>.bak-<data>_<hora>`; um igual fica como está.
+4. Baixa o logo `CachyOS.svg`, que o `shell.json` usa, para `~/Pictures/CachyOS.svg` (do [thesvg](https://github.com/glincker/thesvg), pelo jsDelivr), se o arquivo ainda não existe. Se o download falha, só avisa: o shell funciona sem o logo.
+
+O Caelestia lê esses arquivos por cima da config dele: o `hypr-vars.lua` devolve uma tabela que é mesclada sobre o `variables.lua` padrão (só entra o que difere), o `hypr-user.lua` é carregado por último e o `shell.json` configura o shell. O que está nos seus:
+
+| Arquivo | O que muda em relação ao padrão do Caelestia |
+| ------- | -------------------------------------------- |
+| `hypr-vars.lua` | Terminal em Super+Enter (o padrão é Super+T; o terminal continua o padrão do Caelestia, `foot`); navegador `zen-browser` com `flock`, para não abrir duas janelas |
+| `hypr-user.lua` | Mouse sem aceleração (`flat`), teclado `br` e o monitor `eDP-1` fixo em 1920x1080@60, posição 0x0, escala 1 |
+| `shell.json` | Transparência ligada e o logo `/home/gustavo/Pictures/CachyOS.svg` |
+
+- **Dependem da sua máquina:** o monitor `eDP-1` (a tela interna do notebook; numa máquina sem esse nome a regra não faz efeito) e o caminho do logo: o `shell.json` fixa `/home/gustavo/Pictures/CachyOS.svg`, então o logo só aparece no usuário `gustavo` (o script baixa o SVG para o `~/Pictures` de quem o roda).
+- **O script não instala** o `zen-browser`: o `caelestia install` pergunta pelo componente `zen`; confira que o navegador está instalado, senão o Super+W não abre nada.
+- **Vale a partir da próxima sessão do Hyprland:** saia e entre de novo.
+- **Para mudar algo**, edite o arquivo em `.config/caelestia/` do repo e rode `bash caelestia-setup.sh --so-atalhos`. Os nomes das chaves do `hypr-vars.lua` são os do `variables.lua` do Caelestia: uma chave errada é ignorada em silêncio, e o teste **não** confere isso.
+- **Testes:** `bash tests/caelestia.test.sh`.
+
 ## Backup do Termux
 
 Dois scripts em `Termux/`, escritos em zsh e que precisam de `zstd` e `pv` (`pkg install zstd pv`) e do acesso ao armazenamento (`termux-setup-storage`, porque gravam em `~/storage/shared/Documents`):
@@ -533,6 +570,7 @@ Dois scripts em `Termux/`, escritos em zsh e que precisam de `zstd` e `pv` (`pkg
 - O `emerge` (Gentoo) ainda não é suportado.
 - O `nvidia.sh` foi testado só com cenários simulados, sem hardware NVIDIA no desenvolvimento; só o Arch tem execução real prevista (Fedora, Ubuntu e Debian ficam em `--dry-run`). Rode `./nvidia.sh install --dry-run` e leia o plano antes de instalar.
 - O `oxwm-setup.sh` só funciona em Arch e derivadas (usa `paru` ou `yay` e o AUR), é para X11 e o `config.lua` espera o wallpaper e o `claude-desktop` do seu usuário.
+- O `caelestia-setup.sh` nunca rodou de verdade, e a URL do logo (jsDelivr) nem chegou a ser aberta no desenvolvimento (se o download falhar, o script só avisa) (sem Arch, `paru` nem Hyprland no desenvolvimento): foi testado com `pacman`, `paru` e `caelestia` de mentira, e os dois `.lua` só foram carregados contra uma API `hl` de mentira (o `shell.json` só teve o JSON validado). O `caelestia install` não tem opção documentada para rodar sem perguntas, então o script o deixa interativo. Só Arch e derivadas (fora delas, instale o Caelestia à mão e use `--so-atalhos`).
 - O `Backup-Restore.sh` procura por padrão um nome diferente do que o `Backup_Termux.sh` gera (veja "Backup do Termux").
 - Os dotfiles são baixados de `raw.githubusercontent.com` sem checksum, e da `main` por padrão (`DOTFILES_REF` fixa um commit). Sem rede para o GitHub o setup não aplica os dotfiles; só o aviso aparece.
 - O `setup.sh` não copia o `Termux/.zsh_history` nem os temas `*.auto.conf` do Kitty; só `.zshrc`, `.p10k.zsh` e o `kitty.conf`.
