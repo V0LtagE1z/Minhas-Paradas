@@ -11,7 +11,7 @@ bad()  { echo "FALHOU: $1"; fail=1; }
 
 # PATH mínimo (o que o script usa, mais chmod para o paru de mentira) + as mentiras; sem paru ele não existe de verdade, mesmo que a máquina tenha um.
 mkdir "$tmp/min"
-for c in bash env cmp cp mkdir date dirname cat chmod; do ln -s "$(command -v $c)" "$tmp/min/$c"; done
+for c in bash env cmp cp mkdir date dirname cat chmod rm; do ln -s "$(command -v $c)" "$tmp/min/$c"; done
 fake() {  # nome [conteúdo extra] — comando de mentira que registra a chamada em $FAKE_LOG
   printf '#!/bin/sh\necho "%s $*" >> "$FAKE_LOG"\n%s\n' "$1" "${2:-}" > "$tmp/min/$1"; chmod +x "$tmp/min/$1"
 }
@@ -68,14 +68,31 @@ out=$(env -i HOME="$tmp/home" PATH="$tmp/min" FAKE_LOG="$log" "$tmp/min/bash" "$
 [[ $rc == 1 && ! -s $log ]] && has 'não achei' || bad "arquivo faltando devia sair com 1 antes de instalar (saiu com $rc)"
 run -- --foo; [[ $rc == 1 ]] || bad "opção desconhecida devia sair com 1"
 
+# Logo do shell.json: baixado para ~/Pictures/CachyOS.svg uma vez só; se o download falha, só avisa e a config fica aplicada.
+url=https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/cachyos/default.svg
+fake curl 'while [ $# -gt 0 ]; do case $1 in -o) o=$2; shift ;; esac; shift; done; echo "<svg/>" > "$o"'
+reset; run -- --so-atalhos
+[[ $rc == 0 && -s $tmp/home/Pictures/CachyOS.svg ]] || bad "o logo devia ser baixado para ~/Pictures/CachyOS.svg (rc=$rc)"
+grep -qF -- "-o $tmp/home/Pictures/CachyOS.svg $url" "$log" || bad "o curl devia pedir $url (log: $(tr '\n' '|' < "$log"))"
+: > "$log"; run -- --so-atalhos
+[[ ! -s $log ]] || bad "com o logo já baixado o curl não devia rodar de novo"
+reset; run -- --dry-run
+has "curl -fsSL"; [[ ! -e $tmp/home/Pictures ]] || bad "dry-run não devia criar ~/Pictures"
+fake curl 'while [ $# -gt 0 ]; do case $1 in -o) o=$2; shift ;; esac; shift; done; echo parcial > "$o"; exit 22'
+reset; run -- --so-atalhos
+[[ $rc == 0 ]] && has 'Aviso: não consegui baixar o logo' || bad "download falho devia só avisar e sair com 0 (saiu com $rc)"
+[[ ! -e $tmp/home/Pictures/CachyOS.svg ]] || bad "o arquivo parcial do logo devia ser apagado"
+cmp -s "$repo/.config/caelestia/shell.json" "$tmp/home/.config/caelestia/shell.json" || bad "com o download falho a config devia ficar aplicada"
+rm "$tmp/min/curl"
+
 # shell.json tem de ser um JSON válido (o shell do Caelestia lê esse arquivo).
 if command -v python3 >/dev/null; then
   python3 -c 'import json,sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$repo/.config/caelestia/shell.json" 2>/dev/null || bad "shell.json não é um JSON válido"
 fi
 
-# Os dois .lua: sintaxe, valores e nomes de chave. Com um "hl" de mentira no lugar da API do Hyprland.
+# Os dois .lua: sintaxe e valores. Com um "hl" de mentira no lugar da API do Hyprland.
 if python3 -c 'import lupa' 2>/dev/null; then
-  keys=$(python3 - "$repo/.config/caelestia" <<'EOF'
+  erros=$(python3 - "$repo/.config/caelestia" <<'EOF'
 import sys
 from lupa import LuaRuntime
 d = sys.argv[1]; lua = LuaRuntime()
@@ -93,15 +110,9 @@ c = lua.globals()["calls"]
 i = c["config"]["input"]
 if (i["kb_layout"], i["accel_profile"]) != ("br", "flat"): print("ERRO hypr-user.lua: teclado/mouse")
 if c["monitor"]["output"] != "eDP-1": print("ERRO hypr-user.lua: faltou o monitor eDP-1")
-for k in v: print("CHAVE", k)
 EOF
   ) || bad "o python falhou ao carregar os .lua"
-  grep -E '^ERRO' <<<"$keys" | while read -r l; do echo "FALHOU: $l"; done; grep -q '^ERRO' <<<"$keys" && fail=1
-  # Uma chave com nome errado é ignorada em silêncio pelo Caelestia: confere contra o variables.lua do repo (se ainda existir).
-  vars=$repo/.config/hypr/variables.lua
-  if [[ -f $vars ]]; then
-    for k in $(grep '^CHAVE' <<<"$keys" | cut -d' ' -f2); do grep -qE "^[[:space:]]+${k}[[:space:]]*=" "$vars" || bad "a chave $k não existe no variables.lua do Caelestia"; done
-  else echo "pulado: sem .config/hypr/variables.lua para conferir os nomes das chaves"; fi
+  [[ -z $erros ]] || { while read -r l; do echo "FALHOU: $l"; done <<<"$erros"; fail=1; }
 else echo "pulado: sem python3 com lupa (pip install lupa) não dá para conferir os .lua"; fi
 
 ((fail)) && exit 1

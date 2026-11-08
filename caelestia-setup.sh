@@ -2,8 +2,11 @@
 # caelestia-setup.sh — instala o Caelestia (shell + Hyprland) e aplica a sua config. Só Arch e derivadas.
 #   1. instala o caelestia-cli (AUR) com paru ou yay;
 #   2. roda `caelestia install`, o instalador oficial: ele instala o shell e coloca a config do Hyprland em ~/.config/hypr;
-#   3. copia .config/caelestia/ (hypr-vars.lua, hypr-user.lua e shell.json: só os seus overrides) para ~/.config/caelestia/.
+#   3. copia .config/caelestia/ (hypr-vars.lua, hypr-user.lua e shell.json: só os seus overrides) para ~/.config/caelestia/;
+#   4. baixa o logo CachyOS.svg que o shell.json usa, se ainda não existe em ~/Pictures.
 # Esses arquivos ficam ao lado deste script, em .config/caelestia/ (como no repo). Uso: bash caelestia-setup.sh [opções]
+# shortcut: o logo vem de @main do jsDelivr, que muda; e o shell.json fixa /home/gustavo/Pictures, então o logo só aparece
+#   no usuário gustavo. Upgrade: fixar um commit do glincker/thesvg e gravar o caminho do $HOME no shell.json.
 # shortcut: o `caelestia install` é interativo e não tem opção documentada para rodar sem perguntas; ele pergunta
 #   o que instalar (Spotify, Discord, zen...). Upgrade: passar as respostas quando o instalador ganhar flags.
 set -euo pipefail
@@ -32,6 +35,8 @@ done
 here="$(cd "$(dirname "$0")" && pwd)"
 dest="$HOME/.config/caelestia"
 FILES=(hypr-vars.lua hypr-user.lua shell.json)
+LOGO_URL=https://cdn.jsdelivr.net/gh/glincker/thesvg@main/public/icons/cachyos/default.svg
+LOGO="$HOME/Pictures/CachyOS.svg"
 
 # Confere os arquivos antes de instalar qualquer coisa: faltando um, não adianta instalar o resto.
 for f in "${FILES[@]}"; do
@@ -78,6 +83,17 @@ for f in "${FILES[@]}"; do
     if [ -f "$dest/$f" ] && ! cmp -s "$src" "$dest/$f"; then run cp -- "$dest/$f" "$dest/$f.bak-$(date +%F_%H%M%S)"; fi
     run cp -- "$src" "$dest/$f"
 done
+
+# Logo do shell.json. Falhar só avisa: a config já está aplicada e o shell funciona sem o logo.
+baixar() {
+    if command -v curl >/dev/null 2>&1; then run curl -fsSL --retry 3 --connect-timeout 20 -o "$LOGO" "$LOGO_URL"
+    elif command -v wget >/dev/null 2>&1; then run wget -q -O "$LOGO" "$LOGO_URL"
+    else return 1; fi
+}
+if [ ! -s "$LOGO" ]; then
+    run mkdir -p "$(dirname "$LOGO")"
+    baixar || { run rm -f "$LOGO"; echo "Aviso: não consegui baixar o logo ($LOGO_URL); o shell fica sem ele. Salve um SVG em $LOGO." >&2; }
+fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
     echo
