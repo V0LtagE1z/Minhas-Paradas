@@ -101,9 +101,18 @@ no_power() {  # Termux e proot não têm o que reiniciar/desligar: os itens some
 }
 
 # ─── Ações ────────────────────────────────────────────────────────────────────
+rule() {  # texto — linha de título, larga como o menu: marca onde começa e termina a saída de cada comando (que sai na tela normal)
+  local rows cols t=" $1 " d
+  size; ((cols > 72)) && cols=72; ((cols < 36)) && cols=36
+  ((${#t} > cols - 6)) && t="${t:0:cols-9}… "
+  printf -v d '%*s' $((cols - 4 - ${#t})) ''
+  printf '\n%s━━%s%s%s\n' "$ACC" "$t" "${d// /━}" "$OFF"
+}
+
 run_script() {  # script [args...] — roda como filho: um die/exit do script não derruba o menu
   local s=$1 rc; shift
   local -a deps=("$s")
+  rule "▶ $TITLE"; printf '$ bash %s%s\n\n' "$s" "${*:+ $*}"   # o comando exato, para saber o que está rodando
   case $s in   # o que o script usa ao lado
     mirrors.sh) deps+=(setup.sh) ;;
     oxwm-setup.sh) deps+=(.config/oxwm/config.lua) ;;
@@ -113,10 +122,11 @@ run_script() {  # script [args...] — roda como filho: um die/exit do script n�
   [[ -f $DIR/$s ]] || { echo "[erro] não achei $DIR/$s"; return; }
   # stdin = terminal: no "curl | bash" o stdin é o pipe, e setup.sh/nvidia.sh recusam rodar sem terminal ([[ -t 0 ]])
   bash "$DIR/$s" "$@" <&3; rc=$?
-  echo; echo "[menu] $s terminou (código $rc)."
+  rule "$( ((rc)) && echo ✖ || echo ✔ ) $s terminou (código $rc)"
 }
 
 power() {  # reboot|poweroff  verbo — o menu já perguntou "Tem certeza?"
+  rule "▶ $TITLE"
   if is_wsl; then   # reboot/poweroff aqui não fazem nada: quem manda na distro é o Windows
     echo "[!!] No WSL não dá para $2 por aqui. No Windows (PowerShell ou CMD) rode: wsl --shutdown"
     echo "     (isso para todas as distros WSL; depois é só abrir a distro de novo)"
@@ -131,7 +141,7 @@ close_terminal() {
   # "exit" aqui só encerraria o menu; fechar o terminal é mandar SIGHUP ao shell que o chamou.
   case $(cat "/proc/$PPID/comm" 2>/dev/null) in
     bash|zsh|sh|ash|dash|ksh|fish) kill -HUP "$PPID"; exit 0 ;;
-    *) echo "[!!] não achei com segurança o shell que chamou o menu (sudo?); digite 'exit' ou feche o terminal." ;;
+    *) rule "▶ $TITLE"; echo "[!!] não achei com segurança o shell que chamou o menu (sudo?); digite 'exit' ou feche o terminal." ;;
   esac
 }
 
@@ -162,12 +172,15 @@ add "Sair do menu"         "Sai só do menu|o terminal continua aberto"        "
 N=${#LBL[@]}
 
 # ─── Desenho ──────────────────────────────────────────────────────────────────
-layout() {  # altura (em linhas) do que vai ser desenhado — define W (largura da caixa) e LP (margem esquerda) e imprime a margem de cima
-  local rows cols m
-  read -r rows cols < <(stty size <&3 2>/dev/null)   # linhas e colunas do terminal; sem tty (teste): COLUMNS/LINES, senão 60 e 0
+size() {  # define rows e cols (o chamador os declara local): o tamanho do terminal; sem tty (teste) vale COLUMNS/LINES, senão 60 e 0
+  read -r rows cols < <(stty size <&3 2>/dev/null)
   [[ $cols =~ ^[0-9]+$ ]] || { cols=${COLUMNS:-60}; rows=${LINES:-0}; }
   [[ $cols =~ ^[0-9]+$ ]] || cols=60
   [[ $rows =~ ^[0-9]+$ ]] || rows=0
+}
+layout() {  # altura (em linhas) do que vai ser desenhado — define W (largura da caixa) e LP (margem esquerda) e imprime a margem de cima
+  local rows cols m
+  size
   W=$cols; ((W > 72)) && W=72; ((W < 36)) && W=36
   m=$(((cols - W) / 2)); ((m < 0)) && m=0
   printf -v LP '%*s' "$m" ''
@@ -250,6 +263,7 @@ while :; do
     down|j) sel=$(((sel + 1) % N)) ;;
     enter|' ')
       [[ -z ${CONF[sel]} ]] || confirm "${CONF[sel]}" || continue
+      TITLE=${LBL[sel]}
       alt_off   # o script roda na tela normal: a saída dele fica no terminal (e no scrollback) em vez de sumir com o menu
       ${CMD[sel]}
       pause

@@ -30,7 +30,10 @@ hasnt() { ! grep -qF -- "$1" <<<"$out" || { echo "FALHOU: não devia ter \"$1\""
 # Reiniciar pede "Tem certeza" e n cancela sem reiniciar.
 run '\ns\nj\n\njjjjjj\n\njjj\nnq'
 has 'Tem certeza que deseja'; has 'rodar o setup completo'
-has 'FAKE setup.sh --sem-encerrar'; has '[menu] setup.sh terminou (código 3)'
+has 'FAKE setup.sh --sem-encerrar'; has 'setup.sh terminou (código 3)'
+# Cada comando vem entre um título (com o comando exato) e uma linha de fim com o resultado: ✖ se falhou.
+[[ $out == *'━━ ▶ Setup completo ━'*'$ bash setup.sh --sem-encerrar'*'FAKE setup.sh --sem-encerrar'*'━━ ✖ setup.sh terminou (código 3) ━'* ]] \
+  || { echo "FALHOU: faltou o título, o comando ou a linha de fim em volta do setup.sh"; fail=1; }
 has 'FAKE setup.sh --dry-run --sem-encerrar'; has 'FAKE nvidia.sh install --dry-run'
 has 'reiniciar o computador'; hasnt 'FAKE reboot'
 # Todas as linhas de caixa têm a mesma largura (60 sem terminal), mesmo com acentos nos rótulos.
@@ -102,6 +105,12 @@ EOF
   )
   [[ $res == ok ]] || { echo "FALHOU: Ctrl+C devia sair da tela alternativa ($res)"; fail=1; }
 fi
+
+# Script que dá certo: ✔ no fim. Título de Reiniciar (depois do "Sim") também aparece.
+run 'jjjjj\n\nq'; has '▶ NVIDIA: detectar GPU'; has '$ bash nvidia.sh'; has '✔ nvidia.sh terminou (código 0)'; hasnt '✖'
+run 'jjjjjjjjjj\ns\nq'; has '▶ Reiniciar'
+# Sair do menu não deixa título nenhum para trás.
+run 'jjjjjjjjjjjjj\n'; hasnt '▶'
 
 # "Sim" em Reiniciar chama o reboot (o de mentira).
 run 'jjjjjjjjjj\ns\nq'; has 'FAKE reboot'
