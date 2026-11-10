@@ -2,6 +2,24 @@
 
 Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto não usa versões, então as entradas são por data.
 
+## Não lançado (branch `menu-tela-alternativa-claude-atalho`, a partir da `main`)
+
+### 2026-11-09
+
+#### Corrigido
+
+- **`menu.sh`: o menu não pisca mais e não deixa vestígios no terminal.** Antes cada tecla limpava a tela inteira (`ESC[2J`) e desenhava tudo de novo, o que piscava, e o último quadro ficava no terminal ao sair. Agora o menu usa a **tela alternativa** do terminal (`ESC[?1049h`/`l`), a mesma do `nmtui` e do `alsamixer`: ao sair, com `q`, em "Sair do menu" ou com Ctrl+C, o terminal volta exatamente como estava. Cada quadro é montado inteiro e desenhado de uma vez por cima do anterior (cursor no canto, "apagar até o fim da linha" em cada linha e "apagar o resto" no fim), sem limpar a tela. O cursor fica escondido o tempo todo e volta ao sair. O diálogo "Tem certeza" usa o mesmo desenho.
+- **Os scripts rodam na tela normal.** Ao escolher um item o menu sai da tela alternativa, roda o script e, depois do "Enter para voltar ao menu...", entra de novo. Assim a saída do `setup.sh`, do `nvidia.sh` etc. fica no terminal e no scrollback (não some com o menu), e só o menu em si não deixa rastro. `TERM=dumb` e `NO_COLOR` continuam sem nenhum código de terminal (cada quadro sai embaixo do anterior).
+
+#### Adicionado
+
+- **Atalho Super+I abre o Claude Desktop** (`claude-desktop`), no `.config/caelestia/hypr-user.lua`: `hl.bind("SUPER + I", hl.dsp.exec_cmd("claude-desktop"))`. O Caelestia não usa Super+I em nenhum atalho padrão (conferi o `variables.lua` dele). Reaplique com `bash caelestia-setup.sh --so-atalhos` e entre de novo no Hyprland.
+- **Testes.** `tests/menu.test.sh`: com `TERM=xterm`, o menu entra e sai da tela alternativa uma vez só, nunca emite `ESC[2J`, apaga só até o fim de cada linha, roda o script fora da tela alternativa e, num pty de verdade (Python), sai dela com Ctrl+C. `tests/caelestia.test.sh`: confere o Super+I contra a API `hl` de mentira. Os testes novos falham no `menu.sh` e no `hypr-user.lua` antigos.
+
+#### Não testado
+
+- Nada no Hyprland real nem com o `claude-desktop` instalado. Os terminais que você usa (Kitty, Alacritty, Termux) não foram abertos: o teste confere os códigos emitidos, não o que cada terminal desenha. Redimensionar a janela continua só tendo efeito na próxima tecla (como antes).
+
 ## Não lançado (branch `caelestia-setup`, a partir da `main`)
 
 ### 2026-11-07

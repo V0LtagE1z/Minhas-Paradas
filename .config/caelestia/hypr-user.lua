@@ -11,3 +11,5 @@ hl.monitor({
     position = "0x0",
     scale    = 1,
 })
+-- Super+I abre o Claude Desktop. O Caelestia não usa Super+I em nenhum atalho padrão.
+hl.bind("SUPER + I", hl.dsp.exec_cmd("claude-desktop"))

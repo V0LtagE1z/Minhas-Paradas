@@ -110,6 +110,7 @@ c = lua.globals()["calls"]
 i = c["config"]["input"]
 if (i["kb_layout"], i["accel_profile"]) != ("br", "flat"): print("ERRO hypr-user.lua: teclado/mouse")
 if c["monitor"]["output"] != "eDP-1": print("ERRO hypr-user.lua: faltou o monitor eDP-1")
+if c["binds"]["SUPER + I"] != "exec:claude-desktop": print("ERRO hypr-user.lua: Super+I devia abrir o claude-desktop")
 EOF
   ) || bad "o python falhou ao carregar os .lua"
   [[ -z $erros ]] || { while read -r l; do echo "FALHOU: $l"; done <<<"$erros"; fail=1; }

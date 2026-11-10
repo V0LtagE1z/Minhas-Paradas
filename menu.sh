@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # menu.sh — TUI do Minhas-Paradas: ↑/↓ (ou j/k) escolhem, Enter roda o script certo como processo filho e
 # volta para esta tela. Ações que alteram o sistema pedem "Tem certeza?". Também reinicia, desliga (não no
-# Termux nem no proot: lá o item some) e fecha o terminal.
-# Uso: bash menu.sh   (como usuário normal: os scripts pedem sudo sozinhos; o nvidia.sh recusa root)
+# Termux nem no proot: lá o item some) e fecha o terminal. Como o nmtui e o alsamixer, o menu vive na tela
+# alternativa do terminal: ao sair (ou com Ctrl+C) o terminal volta exatamente como estava, sem vestígios.
+# Uso: bash menu.sh  (como usuário normal: os scripts pedem sudo sozinhos; o nvidia.sh recusa root)
 # Sem clone: curl -fsSL https://raw.githubusercontent.com/V0LtagE1z/Minhas-Paradas/main/menu.sh | bash
 #   Sem os outros scripts ao lado, o menu baixa (curl ou wget, sem git nem tar) só o script do item que você
 #   escolher, para uma pasta temporária que some ao sair; os dotfiles o próprio setup.sh baixa, arquivo por arquivo,
@@ -42,11 +43,22 @@ fi
 # Sem locale UTF-8 (rootfs mínimo de proot) o bash conta bytes e as bordas desalinham com acentos.
 case ${LC_ALL:-${LC_CTYPE:-${LANG:-}}} in *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) ;; *) LC_ALL=C.UTF-8 ;; esac
 
-# Cores (salmão/laranja). Terminal "dumb" ou NO_COLOR: sem cor e sem limpar a tela.
-if [[ -n ${NO_COLOR:-} || ${TERM:-dumb} == dumb ]]; then CLS="" HIDE="" SHOW="" ACC="" REV="" OFF=""
-else CLS=$'\e[H\e[2J' HIDE=$'\e[?25l' SHOW=$'\e[?25h' ACC=$'\e[38;5;209m' REV=$'\e[7m' OFF=$'\e[0m'; fi
+# Terminal e cores (salmão/laranja). O menu vive na tela alternativa (1049, a do nmtui/alsamixer) e cada quadro é
+# desenhado por cima do anterior: cursor no canto e "apagar até o fim da linha" em cada linha. Limpar a tela
+# inteira a cada tecla era o que piscava. Terminal "dumb" ou NO_COLOR: sem cor, sem tela alternativa e sem
+# apagar nada (cada quadro sai embaixo do anterior).
+if [[ -n ${NO_COLOR:-} || ${TERM:-dumb} == dumb ]]; then
+  ALT_ON="" ALT_OFF="" GOHOME="" EOL="" EOS="" NL=$'\n' HIDE="" SHOW="" ACC="" REV="" OFF=""
+else
+  ALT_ON=$'\e[?1049h' ALT_OFF=$'\e[?1049l' GOHOME=$'\e[H' EOL=$'\e[K' EOS=$'\e[J' NL="" HIDE=$'\e[?25l' SHOW=$'\e[?25h'
+  ACC=$'\e[38;5;209m' REV=$'\e[7m' OFF=$'\e[0m'
+fi
+INALT=0
+alt_on()  { printf '%s%s' "$ALT_ON" "$HIDE"; INALT=1; }
+alt_off() { ((INALT)) || return 0; printf '%s%s' "$SHOW" "$ALT_OFF"; INALT=0; }   # só sai se entrou: 1049l solto move o cursor
 TMP_REPO=""   # pasta do repo baixado (rota remota); apagada ao sair
-trap 'printf "%s" "$SHOW"; [[ -z $TMP_REPO ]] || rm -rf -- "$TMP_REPO"' EXIT
+# EXIT também roda em Ctrl+C e kill (o bash executa o trap de EXIT ao morrer por sinal): o terminal nunca fica preso na tela alternativa.
+trap 'alt_off; [[ -z $TMP_REPO ]] || rm -rf -- "$TMP_REPO"' EXIT
 
 # ─── De onde vêm os scripts ───────────────────────────────────────────────────
 MENU_REF=${MENU_REF:-main}
@@ -175,19 +187,24 @@ box_row() {  # texto [1 = selecionado]
   printf '%s%s│%s %s%s%s%s%s %s│%s\n' "$LP" "$ACC" "$OFF" "$m" "$st" "$t" "$pad" "$en" "$ACC" "$OFF"
 }
 
+paint() {  # quadro — o quadro todo sai de uma vez, por cima do anterior; $NL só no terminal "dumb" (sem cursor para voltar)
+  printf '%s%s%s%s%s' "$GOHOME" "${1//$'\n'/$EOL$'\n'}" "$EOL" "$EOS" "$NL"
+}
+
 draw() {
   local i d1 d2
-  printf '%s%s' "$CLS" "$HIDE"
-  layout $((N + 9))   # 3 caixas (N itens + 2 bordas cada, +2 linhas de descrição) + a linha de teclas
-  box_top "Minhas-Paradas"
-  for ((i = 0; i < NINST; i++)); do box_row "${LBL[i]}" $((i == sel)); done
-  box_bottom
-  box_top "Sistema"
-  for ((i = NINST; i < N; i++)); do box_row "${LBL[i]}" $((i == sel)); done
-  box_bottom
   d1=${DESC[sel]%%|*}; d2=${DESC[sel]#*|}
-  box_top "Descrição"; box_row "$d1"; box_row "$d2"; box_bottom
-  printf '%s ↑↓ mover   Enter escolher   q sair\n' "$LP"
+  paint "$(
+    layout $((N + 9))   # 3 caixas (N itens + 2 bordas cada, +2 linhas de descrição) + a linha de teclas
+    box_top "Minhas-Paradas"
+    for ((i = 0; i < NINST; i++)); do box_row "${LBL[i]}" $((i == sel)); done
+    box_bottom
+    box_top "Sistema"
+    for ((i = NINST; i < N; i++)); do box_row "${LBL[i]}" $((i == sel)); done
+    box_bottom
+    box_top "Descrição"; box_row "$d1"; box_row "$d2"; box_bottom
+    printf '%s ↑↓ mover   Enter escolher   q sair\n' "$LP"
+  )"
 }
 
 key() {  # lê uma tecla do terminal (fd 3) → KEY: up down left right enter esc, ou o próprio caractere
@@ -205,12 +222,13 @@ key() {  # lê uma tecla do terminal (fd 3) → KEY: up down left right enter es
 confirm() {  # ação — "Tem certeza que deseja <ação>?"; o padrão é Não
   local yes=0 a b
   while :; do
-    printf '%s%s' "$CLS" "$HIDE"
-    layout 8   # 7 linhas da caixa + a linha de teclas
     if ((yes)); then a="[ Sim ]"; b="  Não  "; else a="  Sim  "; b="[ Não ]"; fi
-    box_top "Confirmar"; box_row ""; box_row "Tem certeza que deseja"; box_row "$1?"; box_row ""
-    box_row "$a    $b"; box_bottom
-    printf '%s ←→ escolher  Enter ok  Esc cancela\n' "$LP"
+    paint "$(
+      layout 8   # 7 linhas da caixa + a linha de teclas
+      box_top "Confirmar"; box_row ""; box_row "Tem certeza que deseja"; box_row "$1?"; box_row ""
+      box_row "$a    $b"; box_bottom
+      printf '%s ←→ escolher  Enter ok  Esc cancela\n' "$LP"
+    )"
     key
     case $KEY in
       left|right|h|l|$'\t') yes=$((1 - yes)) ;;
@@ -223,6 +241,7 @@ confirm() {  # ação — "Tem certeza que deseja <ação>?"; o padrão é Não
 
 # ─── Laço principal ───────────────────────────────────────────────────────────
 sel=0
+alt_on
 while :; do
   draw
   key
@@ -231,9 +250,10 @@ while :; do
     down|j) sel=$(((sel + 1) % N)) ;;
     enter|' ')
       [[ -z ${CONF[sel]} ]] || confirm "${CONF[sel]}" || continue
-      printf '%s%s' "$CLS" "$SHOW"
+      alt_off   # o script roda na tela normal: a saída dele fica no terminal (e no scrollback) em vez de sumir com o menu
       ${CMD[sel]}
-      pause ;;
+      pause
+      alt_on ;;
     q) exit 0 ;;
   esac
 done
