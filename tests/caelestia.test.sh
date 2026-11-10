@@ -97,7 +97,7 @@ import sys
 from lupa import LuaRuntime
 d = sys.argv[1]; lua = LuaRuntime()
 v = lua.execute(open(d + "/hypr-vars.lua", encoding="utf-8").read())
-exp = {"browser": "flock -n /tmp/zen.lock zen-browser || true", "kbTerminal": "SUPER + RETURN"}
+exp = {"browser": "flock -n /tmp/zen.lock zen-browser || true", "kbTerminal": "SUPER + RETURN", "kbEditor": "SUPER + I"}
 for k, x in exp.items():
     if v[k] != x: print("ERRO hypr-vars.lua:", k, "=", v[k], "esperado", x)
 lua.execute('''calls = {binds = {}}
@@ -110,6 +110,8 @@ c = lua.globals()["calls"]
 i = c["config"]["input"]
 if (i["kb_layout"], i["accel_profile"]) != ("br", "flat"): print("ERRO hypr-user.lua: teclado/mouse")
 if c["monitor"]["output"] != "eDP-1": print("ERRO hypr-user.lua: faltou o monitor eDP-1")
+if c["binds"]["SUPER + C"] != "exec:claude-desktop": print("ERRO hypr-user.lua: Super+C devia abrir o claude-desktop")
+if c["binds"]["SUPER + I"] is not None: print("ERRO hypr-user.lua: o Super+I é do editor (kbEditor no hypr-vars.lua), não pode ter bind aqui")
 EOF
   ) || bad "o python falhou ao carregar os .lua"
   [[ -z $erros ]] || { while read -r l; do echo "FALHOU: $l"; done <<<"$erros"; fail=1; }

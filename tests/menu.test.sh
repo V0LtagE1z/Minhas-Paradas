@@ -17,8 +17,8 @@ chmod +x "$tmp/fake/"*
 fail=0
 run() {  # teclas [VAR=valor ...] — \n = Enter, \033[B = seta para baixo; a saída fica em $out
   printf '%b' "$1" > "$tmp/in"; shift
-  out=$(env KERNEL_RELEASE=6.0.0-generic PREFIX= FORCE_PROOT=0 COLUMNS= LINES= "$@" MENU_DIR="$tmp" MENU_TTY="$tmp/in" \
-        TERM=dumb PATH="$tmp/fake:$PATH" bash "$here/../menu.sh" 2>&1); rc=$?
+  out=$(env TERM=dumb KERNEL_RELEASE=6.0.0-generic PREFIX= FORCE_PROOT=0 COLUMNS= LINES= "$@" MENU_DIR="$tmp" MENU_TTY="$tmp/in" \
+        PATH="$tmp/fake:$PATH" bash "$here/../menu.sh" 2>&1); rc=$?
   [[ $rc == 0 ]] || { echo "FALHOU: o menu saiu com $rc"; fail=1; }
 }
 has()   { grep -qF -- "$1" <<<"$out" || { echo "FALHOU: faltou \"$1\""; fail=1; }; }
@@ -30,7 +30,10 @@ hasnt() { ! grep -qF -- "$1" <<<"$out" || { echo "FALHOU: não devia ter \"$1\""
 # Reiniciar pede "Tem certeza" e n cancela sem reiniciar.
 run '\ns\nj\n\njjjjjj\n\njjj\nnq'
 has 'Tem certeza que deseja'; has 'rodar o setup completo'
-has 'FAKE setup.sh --sem-encerrar'; has '[menu] setup.sh terminou (código 3)'
+has 'FAKE setup.sh --sem-encerrar'; has 'setup.sh terminou (código 3)'
+# Cada comando vem entre um título (com o comando exato) e uma linha de fim com o resultado: ✖ se falhou.
+[[ $out == *'━━ ▶ Setup completo ━'*'$ bash setup.sh --sem-encerrar'*'FAKE setup.sh --sem-encerrar'*'━━ ✖ setup.sh terminou (código 3) ━'* ]] \
+  || { echo "FALHOU: faltou o título, o comando ou a linha de fim em volta do setup.sh"; fail=1; }
 has 'FAKE setup.sh --dry-run --sem-encerrar'; has 'FAKE nvidia.sh install --dry-run'
 has 'reiniciar o computador'; hasnt 'FAKE reboot'
 # Todas as linhas de caixa têm a mesma largura (60 sem terminal), mesmo com acentos nos rótulos.
@@ -67,6 +70,47 @@ run 'jj\ns\nq'; has 'aplicar só os dotfiles'; has 'FAKE setup.sh --dotfiles'
 
 # Caelestia: pede "Tem certeza" e roda o caelestia-setup.sh.
 run 'jjjjjjjjj\ns\nq'; has 'instalar o Caelestia'; has 'FAKE caelestia-setup.sh'
+
+# Tela alternativa, como o nmtui/alsamixer (TERM=xterm; com TERM=dumb não há escape nenhum): o menu entra uma vez e sai
+# uma vez, nunca limpa a tela inteira (o 2J era o que piscava) e o terminal sai da tela alternativa por último.
+on=$'\e[?1049h' off=$'\e[?1049l'
+count() { local t=${out//"$1"/}; echo $(((${#out} - ${#t}) / ${#1})); }
+run 'jjq' TERM=xterm
+[[ $out == "$on"* && $out == *"$off" ]] || { echo "FALHOU: o menu devia abrir com 1049h e terminar com 1049l"; fail=1; }
+[[ $(count "$on") == 1 && $(count "$off") == 1 ]] || { echo "FALHOU: devia entrar e sair da tela alternativa uma vez só"; fail=1; }
+hasnt $'\e[2J'; hasnt $'\e[H\e[J'
+has $'\e[K'; has $'\e[?25h'   # apaga só até o fim de cada linha; o cursor volta ao sair
+# Escolher um item: o script roda na tela normal (sai da alternativa antes, volta depois) e o menu continua.
+run '\ns\nq' TERM=xterm
+[[ $out == *"$off"*'FAKE setup.sh --sem-encerrar'*"$on"* ]] || { echo "FALHOU: o script devia rodar fora da tela alternativa"; fail=1; }
+[[ $(count "$on") == 2 && $(count "$off") == 2 ]] || { echo "FALHOU: devia sair e voltar à tela alternativa em volta do script (h=$(count "$on") l=$(count "$off"))"; fail=1; }
+# Ctrl+C no meio do menu, num terminal de verdade (pty): o terminal não pode ficar preso na tela alternativa.
+if command -v python3 >/dev/null; then
+  res=$(python3 - "$here/../menu.sh" "$tmp" <<'EOF'
+import os, pty, select, sys, time
+menu, tmp = sys.argv[1:3]
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvpe("bash", ["bash", menu], dict(os.environ, TERM="xterm", MENU_DIR=tmp, KERNEL_RELEASE="6.0.0-generic", PREFIX="", FORCE_PROOT="0"))
+buf, sent, end = b"", False, time.time() + 10
+while time.time() < end:
+    if not select.select([fd], [], [], 0.2)[0]: continue
+    try: d = os.read(fd, 4096)
+    except OSError: break
+    if not d: break
+    buf += d
+    if not sent and b"mover" in buf: os.write(fd, b"\x03"); sent = True
+print("ok" if sent and buf.startswith(b"\x1b[?1049h") and buf.endswith(b"\x1b[?1049l") else "sent=%s fim=%r" % (sent, buf[-30:]))
+EOF
+  )
+  [[ $res == ok ]] || { echo "FALHOU: Ctrl+C devia sair da tela alternativa ($res)"; fail=1; }
+fi
+
+# Script que dá certo: ✔ no fim. Título de Reiniciar (depois do "Sim") também aparece.
+run 'jjjjj\n\nq'; has '▶ NVIDIA: detectar GPU'; has '$ bash nvidia.sh'; has '✔ nvidia.sh terminou (código 0)'; hasnt '✖'
+run 'jjjjjjjjjj\ns\nq'; has '▶ Reiniciar'
+# Sair do menu não deixa título nenhum para trás.
+run 'jjjjjjjjjjjjj\n'; hasnt '▶'
 
 # "Sim" em Reiniciar chama o reboot (o de mentira).
 run 'jjjjjjjjjj\ns\nq'; has 'FAKE reboot'
