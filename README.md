@@ -548,12 +548,12 @@ O Caelestia lê esses arquivos por cima da config dele: o `hypr-vars.lua` devolv
 
 | Arquivo | O que muda em relação ao padrão do Caelestia |
 | ------- | -------------------------------------------- |
-| `hypr-vars.lua` | Terminal em Super+Enter (o padrão é Super+T; o terminal continua o padrão do Caelestia, `foot`); navegador `zen-browser` com `flock`, para não abrir duas janelas |
-| `hypr-user.lua` | Mouse sem aceleração (`flat`), teclado `br`, o monitor `eDP-1` fixo em 1920x1080@60, posição 0x0, escala 1, e o atalho Super+I, que abre o Claude Desktop (`claude-desktop`; o padrão do Caelestia não usa Super+I) |
+| `hypr-vars.lua` | Terminal em Super+Enter (o padrão é Super+T; o terminal continua o padrão do Caelestia, `foot`); navegador `zen-browser` com `flock`, para não abrir duas janelas; o editor (o padrão do Caelestia, `codium`) sai do Super+C e vai para o Super+I (`kbEditor`) |
+| `hypr-user.lua` | Mouse sem aceleração (`flat`), teclado `br`, o monitor `eDP-1` fixo em 1920x1080@60, posição 0x0, escala 1, e o atalho Super+C, que abre o Claude Desktop (`claude-desktop`; no padrão do Caelestia o Super+C abre o editor, que o `hypr-vars.lua` moveu para o Super+I) |
 | `shell.json` | Transparência ligada e o logo `/home/gustavo/Pictures/CachyOS.svg` |
 
 - **Dependem da sua máquina:** o monitor `eDP-1` (a tela interna do notebook; numa máquina sem esse nome a regra não faz efeito) e o caminho do logo: o `shell.json` fixa `/home/gustavo/Pictures/CachyOS.svg`, então o logo só aparece no usuário `gustavo` (o script baixa o SVG para o `~/Pictures` de quem o roda).
-- **O script não instala** o `zen-browser`: o `caelestia install` pergunta pelo componente `zen`; confira que o navegador está instalado, senão o Super+W não abre nada. O mesmo vale para o `claude-desktop` do Super+I: o script não o instala, e sem o comando no `PATH` o atalho não faz nada.
+- **O script não instala** o `zen-browser`: o `caelestia install` pergunta pelo componente `zen`; confira que o navegador está instalado, senão o Super+W não abre nada. O mesmo vale para o `claude-desktop` do Super+C e para o `codium` do Super+I: o script não instala nenhum dos dois, e sem o comando no `PATH` o atalho não faz nada.
 - **Vale a partir da próxima sessão do Hyprland:** saia e entre de novo.
 - **Para mudar algo**, edite o arquivo em `.config/caelestia/` do repo e rode `bash caelestia-setup.sh --so-atalhos`. Os nomes das chaves do `hypr-vars.lua` são os do `variables.lua` do Caelestia: uma chave errada é ignorada em silêncio, e o teste **não** confere isso.
 - **Testes:** `bash tests/caelestia.test.sh`.

@@ -11,5 +11,5 @@ hl.monitor({
     position = "0x0",
     scale    = 1,
 })
--- Super+I abre o Claude Desktop. O Caelestia não usa Super+I em nenhum atalho padrão.
-hl.bind("SUPER + I", hl.dsp.exec_cmd("claude-desktop"))
+-- Super+C abre o Claude Desktop. O Super+C era do editor no Caelestia (kbEditor); o hypr-vars.lua o move para o Super+I.
+hl.bind("SUPER + C", hl.dsp.exec_cmd("claude-desktop"))

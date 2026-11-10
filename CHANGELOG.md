@@ -13,12 +13,12 @@ Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep 
 
 #### Adicionado
 
-- **Atalho Super+I abre o Claude Desktop** (`claude-desktop`), no `.config/caelestia/hypr-user.lua`: `hl.bind("SUPER + I", hl.dsp.exec_cmd("claude-desktop"))`. O Caelestia não usa Super+I em nenhum atalho padrão (conferi o `variables.lua` dele). Reaplique com `bash caelestia-setup.sh --so-atalhos` e entre de novo no Hyprland.
-- **Testes.** `tests/menu.test.sh`: com `TERM=xterm`, o menu entra e sai da tela alternativa uma vez só, nunca emite `ESC[2J`, apaga só até o fim de cada linha, roda o script fora da tela alternativa e, num pty de verdade (Python), sai dela com Ctrl+C. `tests/caelestia.test.sh`: confere o Super+I contra a API `hl` de mentira. Os testes novos falham no `menu.sh` e no `hypr-user.lua` antigos.
+- **Super+C abre o Claude Desktop e o Super+I abre o editor (codium).** No padrão do Caelestia o Super+C é do editor (`kbEditor = "SUPER + C"`, `editor = "codium"`, conferido no `variables.lua` e no `hyprctl binds` da sua máquina). Então são duas mudanças juntas: `.config/caelestia/hypr-vars.lua` ganha `kbEditor = "SUPER + I"` (o codium muda de tecla; nenhum atalho padrão usa Super+I) e `.config/caelestia/hypr-user.lua` ganha `hl.bind("SUPER + C", hl.dsp.exec_cmd("claude-desktop"))`. Só a bind sem mover o `kbEditor` deixaria duas binds no Super+C. Reaplique com `bash caelestia-setup.sh --so-atalhos` e entre de novo no Hyprland. Uma versão anterior desta branch tinha o `claude-desktop` no Super+I; foi trocada a seu pedido.
+- **Testes.** `tests/menu.test.sh`: com `TERM=xterm`, o menu entra e sai da tela alternativa uma vez só, nunca emite `ESC[2J`, apaga só até o fim de cada linha, roda o script fora da tela alternativa e, num pty de verdade (Python), sai dela com Ctrl+C. `tests/caelestia.test.sh`: confere o `kbEditor` do `hypr-vars.lua` e, contra a API `hl` de mentira, que o Super+C abre o `claude-desktop` e que o `hypr-user.lua` não faz bind no Super+I. Os testes novos falham no `menu.sh` e no `hypr-user.lua` antigos.
 
 #### Não testado
 
-- Nada no Hyprland real nem com o `claude-desktop` instalado. Os terminais que você usa (Kitty, Alacritty, Termux) não foram abertos: o teste confere os códigos emitidos, não o que cada terminal desenha. Redimensionar a janela continua só tendo efeito na próxima tecla (como antes).
+- Nada no Hyprland real nem com o `claude-desktop` instalado. Não confirmei que a bind do `hypr-user.lua` convive com a do Caelestia no Super+C só por mover o `kbEditor`: confira com `hyprctl binds` (deve haver uma entrada `C` com Super e nenhuma duplicada) e `hyprctl configerrors`. Os terminais que você usa (Kitty, Alacritty, Termux) não foram abertos: o teste confere os códigos emitidos, não o que cada terminal desenha. Redimensionar a janela continua só tendo efeito na próxima tecla (como antes).
 
 ## Não lançado (branch `caelestia-setup`, a partir da `main`)
 
