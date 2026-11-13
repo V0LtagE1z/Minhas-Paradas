@@ -1,9 +1,9 @@
-# https://github.com/korvahannu/arch-nvidia-drivers-installation-guide
-
 #!/usr/bin/env bash
 # shellcheck disable=SC1090,SC2034  # fonte dinamica do os-release; NV_* sao lidas por indirecao (${!v})
 # =============================================================================
 # nvidia.sh — driver NVIDIA no Linux
+#
+# Referência: https://github.com/korvahannu/arch-nvidia-drivers-installation-guide
 #
 #   ETAPA 1  DETECÇÃO    somente leitura          ./nvidia.sh [--env]
 #   ETAPA 2  INSTALAÇÃO  altera o sistema         ./nvidia.sh install [opções]
@@ -729,6 +729,13 @@ plan_flavor() {
 arch_plan() {
   PKG_REPO=(); PKG_AUR=()
   local pb=$NV_KERNEL_PKGBASE dkms=$OPT_DKMS hdr=""
+  # No driver 590 o Arch trocou nvidia/nvidia-dkms/nvidia-lts por nvidia-open/-open-dkms: não há módulo proprietário nos repositórios.
+  # Recusa aqui, no plano, e não no arch_verify_repo, que só roda depois do pacman -Syu.
+  if [[ $PLAN_FLAVOR == proprietary ]]; then
+    _err "No Arch o módulo proprietário saiu dos repositórios (driver 590): nvidia e nvidia-dkms viraram nvidia-open e nvidia-open-dkms."
+    _msg "Tire o --proprietary (use --open ou o automático). Maxwell/Pascal/Volta continuam no ramo legado 580xx, que é proprietário."
+    return 14
+  fi
   [[ $PLAN_FLAVOR == legacy580 ]] && dkms=1      # o AUR só oferece DKMS
   [[ $pb == linux ]] || dkms=1                   # pacote pré-compilado só p/ o kernel "linux"
   PLAN_DKMS=$dkms
@@ -743,9 +750,6 @@ arch_plan() {
   case $PLAN_FLAVOR in
     open)
       if (( dkms )); then PKG_REPO+=(nvidia-open-dkms "$hdr"); else PKG_REPO+=(nvidia-open); fi
-      PKG_REPO+=(nvidia-utils nvidia-settings) ;;
-    proprietary)
-      if (( dkms )); then PKG_REPO+=(nvidia-dkms "$hdr"); else PKG_REPO+=(nvidia); fi
       PKG_REPO+=(nvidia-utils nvidia-settings) ;;
     legacy580)
       PKG_REPO+=("$hdr"); PKG_AUR+=(nvidia-580xx-dkms nvidia-580xx-utils nvidia-580xx-settings) ;;
@@ -1210,21 +1214,25 @@ inst_execute() {
       fedora)        fedora_install ;;
       debian|ubuntu) apt_install ;;
     esac; rc=$?
-    (( rc == 0 )) || { inst_fail; return "$rc"; }
+    (( rc == 0 )) || { inst_fail "$rc"; return "$rc"; }
   fi
-  _step "Parâmetros do kernel (modeset)";  kparams_apply; rc=$?; (( rc == 0 )) || { inst_fail; return "$rc"; }
-  _step "Initramfs";                       regen_initramfs; rc=$?; (( rc == 0 )) || { inst_fail; return "$rc"; }
+  _step "Parâmetros do kernel (modeset)";  kparams_apply; rc=$?; (( rc == 0 )) || { inst_fail "$rc"; return "$rc"; }
+  _step "Initramfs";                       regen_initramfs; rc=$?; (( rc == 0 )) || { inst_fail "$rc"; return "$rc"; }
   _step "PRIME";                           prime_setup
   _step "Snapshot (depois)";               snap_post
   inst_summary
   return 0
 }
 
-inst_fail() {
+inst_fail() {   # $1 = código de saída do passo que parou (16 = você disse não, não é falha)
   echo
-  _err "um passo falhou; nada foi desfeito automaticamente."
+  if (( ${1:-0} == 16 )); then
+    _msg "Cancelado por você; nada foi desfeito automaticamente (o que já foi aplicado continua)."
+  else
+    _err "um passo falhou; nada foi desfeito automaticamente."
+  fi
   [[ -n $SNAP_PRE && $SNAP_PRE != dry ]] && _msg "Snapshot pré: #$SNAP_PRE (snapper -c root status $SNAP_PRE..0 mostra o que mudou)."
-  _msg "Arquivos editados têm backup *.nvsh-bak-* ao lado. O script é idempotente: corrija e rode de novo."
+  _msg "Arquivos editados têm backup *.nvsh-bak-* ao lado. O script é idempotente: rode de novo (corrija o problema antes, se foi uma falha)."
 }
 
 inst_run() {   # assume inst_parse + nv_detect_all já executados
@@ -1267,7 +1275,8 @@ nvidia.sh — driver NVIDIA no Linux
 Opções do install:
   -n, --dry-run        mostra o plano e os comandos, sem alterar nada
       --open           força os módulos open (Turing ou mais nova)
-      --proprietary    força os módulos proprietários (Turing a Hopper)
+      --proprietary    força os módulos proprietários (Turing a Hopper; no Arch não
+                       existe mais: o 590 trocou por open e o script recusa)
                        Maxwell/Pascal/Volta usam sempre o ramo legado 580xx
       --dkms           usa pacotes DKMS mesmo no kernel "linux" (Arch)
       --bootloader=X   auto (padrão) | grub | limine | none (usa /etc/modprobe.d)

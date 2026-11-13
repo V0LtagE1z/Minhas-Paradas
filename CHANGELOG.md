@@ -2,6 +2,29 @@
 
 Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto não usa versões, então as entradas são por data.
 
+## Não lançado (branch `nvidia-correcoes`, a partir da `main`)
+
+### 2026-11-12
+
+#### Corrigido
+
+- **`nvidia.sh`: o shebang agora é a linha 1.** O arquivo começava com um comentário (o link do guia do korvahannu) e o `#!/usr/bin/env bash` estava na linha 3; o kernel só lê o shebang na primeira linha, então ele era ignorado. Executar o arquivo direto, sem passar por um shell, dava `Exec format error`, e `dash nvidia.sh` dava erro de sintaxe; só o bash escondia o problema, porque executa o arquivo mesmo assim. O link virou o comentário `Referência:` do cabeçalho.
+- **`nvidia.sh` agora é executável (modo 755 no git).** Estava 644, então o `./nvidia.sh` que o README manda usar dava "Permissão negada" depois de clonar. O menu não era afetado: ele roda `bash nvidia.sh`.
+- **`nvidia.sh`: `--proprietary` no Arch é recusado no plano (saída 14).** No driver 590 o Arch trocou `nvidia` e `nvidia-dkms` (e o `nvidia-lts`) por `nvidia-open` e `nvidia-open-dkms` (e a versão LTS) ([aviso do Arch](https://archlinux.org/news/nvidia-590-driver-drops-pascal-support-main-packages-switch-to-open-kernel-modules/)), então o plano pedia pacotes que não existem mais. A conferência com `pacman -Si` pegaria o erro, mas só depois do `pacman -Syu` completo (o sistema era atualizado e o script abortava). Agora ele para antes de qualquer comando e explica; o ramo `proprietary` do `arch_plan` foi apagado. Maxwell, Pascal e Volta não mudam: seguem no legado 580xx, que é proprietário. Fora do Arch o `--proprietary` continua como estava.
+- **`nvidia.sh`: dizer "não" a uma pergunta não aparece mais como falha.** Se você recusasse a edição do GRUB ou do Limine (saída 16), o script imprimia "um passo falhou". Agora o `inst_fail` recebe o código: com 16 diz que foi cancelado por você e que o que já foi aplicado continua; com os outros códigos a mensagem de falha é a mesma de antes.
+
+#### Adicionado
+
+- **`tests/nvidia.test.sh`.** Carrega o `nvidia.sh` com `source` e usa os ganchos `NVSH_*` numa pasta temporária (nada é instalado, e o `/boot` não é lido): a mesclagem dos parâmetros do kernel (tira `nvidia_drm.modeset=0`, aceita `_` no lugar de `-`, mantém o resto), a edição do GRUB em `--dry-run` (aspas duplas com comentário, aspas simples, linha ausente, parâmetros já presentes, arquivo intocado), a reescrita do Limine (sintaxe nova `cmdline:` e antiga `CMDLINE=`), o plano do Arch (`--open` e o automático planejam `nvidia-open`; `--proprietary` sai com 14, de ponta a ponta sem chegar ao `pacman -Syu`; Pascal com `--proprietary` cai no legado 580xx), as mensagens do `inst_fail`, o shebang e o bit de execução. Contra o `nvidia.sh` anterior, falha exatamente nesses quatro pontos.
+
+#### Alterado
+
+- README: tabela de arquivos (`tests/nvidia.test.sh` e a descrição do `nvidia.sh`), tabela de drivers e de opções do `nvidia.sh` (o `--proprietary` não vale no Arch), pacotes do Arch (só `nvidia-open` e `nvidia-open-dkms`) e a lista de testes.
+
+#### Não testado
+
+- Nada numa máquina real: só `--dry-run`, arquivos de mentira e o `pacman` ausente. Não confirmei com um `pacman -Si nvidia` real que o nome saiu do repositório (vale o aviso do Arch). Não tratei o risco de o `/boot` não ser legível para um usuário comum (ESP montada com `dmask=0077`): a detecção do bootloader e a leitura do `limine.conf` rodam sem root e podem não enxergar o `/boot/grub/grub.cfg`; confira com `stat -c %a /boot` (755 serve, 700 é o problema) e me diga o resultado. Também ficou de fora o `mktemp` no clone do `paru` (a pasta `/tmp/nvsh-paru.<pid>` é previsível).
+
 ## Não lançado (branch `menu-tela-alternativa-claude-atalho`, a partir da `main`)
 
 ### 2026-11-09
