@@ -77,5 +77,77 @@ out=$(env NVSH_SKIP_ENV_CHECK=1 NVSH_OS_RELEASE="$tmp/os-release" NVSH_PCI_ROOT=
 SNAP_PRE=""; out=$(inst_fail 16 2>&1); hasnt 'falhou'; has 'Cancelado'
 out=$(inst_fail 15 2>&1); has 'um passo falhou'
 
+# /boot 0700 (o archinstall monta a ESP com dmask=0077): sem root o -e dentro dele falha e o bootloader some da detecção.
+# O sandbox roda como root e não simula EACCES, então: _boot_hidden diz "escondido", _any (o -e sem root) diz "não vejo nada" e o sudo de
+# mentira (função) roda o comando de verdade. Cada bloco roda num subshell, que descarta os stubs ao sair.
+hid=$tmp/hid; mkdir -p "$hid"; : > "$hid/limine.conf"
+res=$(
+  NV_BOOT_BLIND=0; NVSH_FAKE_EUID=1000
+  _boot_hidden() { return 0; }; _any() { return 1; }
+  sudo() { [[ ${1:-} == -n ]] && shift; "$@"; }
+  _bany "$hid/limine.conf"  || echo "_bany devia achar o arquivo via sudo"
+  _bany "$hid/nada" "$hid/*.conf" || echo "_bany devia aceitar glob (e achar o limine.conf)"
+  ! _bany "$hid/nada"       || echo "_bany não devia achar arquivo que não existe"
+  (( NV_BOOT_BLIND == 0 ))  || echo "arquivo ausente não é falta de acesso: NV_BOOT_BLIND devia seguir 0"
+  sudo() { return 1; }
+  ! _bany "$hid/limine.conf" || echo "sem sudo o _bany não devia achar nada"
+  (( NV_BOOT_BLIND == 1 ))  || echo "sudo falhando devia marcar NV_BOOT_BLIND=1 (detecção cega)"
+  _exists "$hid/nada"; [[ $? == 2 ]] || echo "_exists sem sudo devia dizer 'não sei' (2), não 'não existe'"
+  sudo() { [[ ${1:-} == -n ]] && shift; "$@"; }
+  _exists "$hid/limine.conf"; [[ $? == 0 ]] || echo "_exists devia achar via sudo (0)"
+  _exists "$hid/nada";        [[ $? == 1 ]] || echo "_exists devia dizer 'não existe' (1)"
+)
+[[ -z $res ]] || while IFS= read -r l; do bad "/boot 0700: $l"; done <<<"$res"
+
+# Boot visível: nada de sudo (o caminho normal não pode passar a pedir senha).
+res=$(
+  _boot_hidden() { return 1; }
+  sudo() { echo "chamou sudo"; return 1; }
+  _bany "$hid/limine.conf" || echo "_bany devia achar o arquivo sem sudo"
+  ! _bany "$hid/nada" || echo "_bany não devia achar o que não existe"
+)
+[[ -z $res ]] || while IFS= read -r l; do bad "/boot visível: $l"; done <<<"$res"
+
+# _install_file é fail-closed: se não dá para saber se o destino existe (sudo falhou), não escreve; do contrário sobrescreveria sem backup.
+printf 'novo\n' > "$tmp/novo"
+res=$(
+  OPT_DRY=0; NVSH_FAKE_EUID=1000
+  _boot_hidden() { return 0; }; sudo() { return 1; }
+  out=$(_install_file "$tmp/novo" "$hid/inexistente" 2>&1); rc=$?
+  [[ $rc == 15 ]] || echo "_install_file sem acesso devia sair com 15 (saiu com $rc)"
+  grep -qF 'Nada foi escrito' <<<"$out" || echo "_install_file devia avisar que nada foi escrito"
+  [[ ! -e $hid/inexistente ]] || echo "_install_file escreveu mesmo sem saber se o destino existia"
+)
+[[ -z $res ]] || while IFS= read -r l; do bad "$l"; done <<<"$res"
+
+# O install pede o sudo antes de detectar quando o /boot está escondido; sem sudo, recusa (13) em vez de planejar às cegas.
+res=$(
+  _boot_hidden() { return 0; }
+  sudo() { return 1; }
+  out=$(inst_boot_access 2>&1); rc=$?
+  [[ $rc == 13 ]] || echo "inst_boot_access sem sudo devia sair com 13 (saiu com $rc)"
+  sudo() { echo "pediu-senha" >>"$tmp/sudo.log"; return 0; }
+  inst_boot_access >/dev/null 2>&1 || echo "inst_boot_access com sudo ok devia passar"
+  [[ $(cat "$tmp/sudo.log") == pediu-senha ]] || echo "inst_boot_access devia chamar sudo -v uma vez"
+  _boot_hidden() { return 1; }; : >"$tmp/sudo.log"
+  inst_boot_access >/dev/null 2>&1 || echo "com o /boot visível o inst_boot_access devia passar"
+  [[ ! -s $tmp/sudo.log ]] || echo "com o /boot visível não devia pedir sudo"
+)
+[[ -z $res ]] || while IFS= read -r l; do bad "inst_boot_access: $l"; done <<<"$res"
+
+# Limine em --dry-run com o config num /boot escondido: acha, mostra o diff e não escreve nada.
+mkdir -p "$NVSH_ROOT/boot"; printf '/Arch\n    cmdline: root=UUID=abc rw quiet\n' > "$NVSH_ROOT/boot/limine.conf"
+res=$(
+  OPT_DRY=1; OPT_YES=0; NV_FAMILY=arch; NVSH_FAKE_EUID=1000
+  _boot_hidden() { return 0; }; _any() { return 1; }
+  sudo() { [[ ${1:-} == -n ]] && shift; "$@"; }
+  out=$(bl_limine 2>&1); rc=$?
+  [[ $rc == 0 ]] || echo "bl_limine saiu com $rc: $out"
+  grep -qF '+    cmdline: root=UUID=abc rw quiet nvidia-drm.modeset=1 nvidia-drm.fbdev=1' <<<"$out" || echo "bl_limine devia mostrar o diff da linha cmdline: $out"
+  [[ $(cat "$NVSH_ROOT/boot/limine.conf") == $'/Arch\n    cmdline: root=UUID=abc rw quiet' ]] || echo "o --dry-run alterou o limine.conf"
+)
+[[ -z $res ]] || while IFS= read -r l; do bad "limine em /boot 0700: $l"; done <<<"$res"
+rm -rf "${NVSH_ROOT:?}/boot"
+
 ((fail)) && { echo "Há testes falhando."; exit 1; }
 echo "OK: tests/nvidia.test.sh"

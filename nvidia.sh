@@ -64,7 +64,7 @@ NV_VARS=(
   NV_STATE NV_MOD_LOADED NV_MOD_KIND NV_MOD_SOURCE NV_DRV_VERSION
   NV_DRM_MODESET NV_DRM_FBDEV NV_NOUVEAU_LOADED NV_NOUVEAU_BLACKLISTED
   NV_PKGS NV_PKG_DRIVER NV_RUNFILE NV_SMI_OK
-  NV_UEFI NV_SECUREBOOT NV_BOOTLOADERS NV_INITRAMFS
+  NV_UEFI NV_SECUREBOOT NV_BOOTLOADERS NV_BOOT_BLIND NV_INITRAMFS
   NV_KERNEL NV_KERNEL_PKGBASE NV_HEADERS
   NV_TOOLS NV_SESSION NV_REPO_OK NV_REPO_NOTE
 )
@@ -73,6 +73,19 @@ NV_VARS=(
 _have() { command -v "$1" >/dev/null 2>&1; }
 _cat()  { [[ -r $1 ]] && tr -d '\0\n' <"$1"; }
 _any()  { local p; for p in "$@"; do [[ -e $p ]] && return 0; done; return 1; }
+# /boot e /efi costumam ser 0700 root (o archinstall monta a ESP com dmask=0077). Sem root, o -e dentro deles falha
+# e o bootloader "some" da detecção. _bany é o _any que enxerga esses caminhos (aceita glob), via sudo só quando preciso.
+_boot_hidden() { local d; for d in /boot /efi; do [[ -d $d && ! -x $d ]] && return 0; done; return 1; }
+_bany() {
+  local rc
+  _any "$@" && return 0
+  _boot_hidden || return 1
+  # sudo -n nunca pergunta senha: o relatório da etapa 1 não pode travar. 0 achou, 3 não achou, outro = sudo não rodou (cego)
+  sudo -n sh -c 'for p; do for f in $p; do [ -e "$f" ] && exit 0; done; done; exit 3' _ "$@" 2>/dev/null; rc=$?
+  (( rc == 0 )) && return 0
+  (( rc == 3 )) || NV_BOOT_BLIND=1
+  return 1
+}
 _glob() { compgen -G "$1" >/dev/null 2>&1; }
 _warn() { NV_WARNINGS+="$1"$'\n'; }
 _info() { NV_NOTES+="$1"$'\n'; }
@@ -320,7 +333,7 @@ nv_detect_driver() {
 
 # ---------- 5. boot, kernel, ferramentas, repositórios -------------------------
 nv_detect_boot() {
-  NV_UEFI=0; NV_SECUREBOOT=na; NV_BOOTLOADERS=""; NV_INITRAMFS=""
+  NV_UEFI=0; NV_SECUREBOOT=na; NV_BOOTLOADERS=""; NV_BOOT_BLIND=0; NV_INITRAMFS=""
   local sbvar=/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c v
 
   if [[ -d /sys/firmware/efi ]]; then
@@ -337,16 +350,16 @@ nv_detect_boot() {
   fi
 
   local bl=() ir=()
-  _any /boot/limine.conf /boot/limine.cfg /boot/limine/limine.conf /boot/limine/limine.cfg \
-       /efi/limine.conf /efi/limine/limine.conf /boot/efi/limine.conf \
-       /boot/EFI/limine /efi/EFI/limine /boot/efi/EFI/limine && bl+=(limine)
+  _bany /boot/limine.conf /boot/limine.cfg /boot/limine/limine.conf /boot/limine/limine.cfg \
+        /efi/limine.conf /efi/limine/limine.conf /boot/efi/limine.conf \
+        /boot/EFI/limine /efi/EFI/limine /boot/efi/EFI/limine && bl+=(limine)
   { _have bootctl && bootctl is-installed >/dev/null 2>&1; } \
-    || _any /boot/loader/loader.conf /efi/loader/loader.conf /boot/efi/loader/loader.conf \
+    || _bany /boot/loader/loader.conf /efi/loader/loader.conf /boot/efi/loader/loader.conf \
     && bl+=(systemd-boot)
   _any /etc/default/grub \
-    && _any /boot/grub/grub.cfg /boot/grub2/grub.cfg /boot/efi/EFI/*/grub.cfg /efi/EFI/*/grub.cfg \
+    && _bany /boot/grub/grub.cfg /boot/grub2/grub.cfg /boot/efi/EFI/*/grub.cfg /efi/EFI/*/grub.cfg \
     && bl+=(grub)
-  _any /boot/EFI/refind /efi/EFI/refind /boot/efi/EFI/refind /boot/refind_linux.conf && bl+=(refind)
+  _bany /boot/EFI/refind /efi/EFI/refind /boot/efi/EFI/refind /boot/refind_linux.conf && bl+=(refind)
   NV_BOOTLOADERS="${bl[*]}"
 
   _have mkinitcpio       && ir+=(mkinitcpio)
@@ -413,6 +426,8 @@ nv_assess() {
   [[ $NV_STATE == active && $NV_SMI_OK == 0 ]] \
     && _warn "Módulo carregado, mas o nvidia-smi não responde."
   (( NV_REPO_OK )) || _warn "$NV_REPO_NOTE"
+  (( NV_BOOT_BLIND )) \
+    && _warn "O /boot não é legível sem root (modo 700, comum quando a ESP é montada com dmask=0077): o bootloader pode não ter sido detectado. Rode 'sudo -v' e repita, ou use 'install', que pede a senha."
   if (( $(wc -w <<<"$NV_BOOTLOADERS") > 1 )); then
     _warn "Mais de um bootloader detectado ($NV_BOOTLOADERS): confirmar qual está em uso antes de mexer em parâmetros do kernel."
   fi
@@ -549,6 +564,16 @@ run() {
 }
 run_root() { if [[ $(_euid) == 0 ]]; then run "$@"; else run sudo "$@"; fi; }
 _root()    { if [[ $(_euid) == 0 ]]; then "$@"; else sudo "$@"; fi; }   # sem eco (captura)
+# leitura que precisa enxergar dentro de um /boot 0700: com root só quando esse é o caso (o resto roda como usuário)
+_rt()      { if _boot_hidden; then _root "$@"; else "$@"; fi; }
+# 0 existe, 1 não existe, 2 não deu para saber (sudo falhou): quem escreve em seguida não pode tratar "não sei" como "não existe"
+_exists() {
+  local rc
+  [[ -e $1 ]] && return 0
+  _boot_hidden || return 1
+  _root sh -c '[ -e "$1" ] && exit 0; exit 3' _ "$1" 2>/dev/null; rc=$?
+  case $rc in 0) return 0 ;; 3) return 1 ;; *) return 2 ;; esac
+}
 
 # pergunta s/N; "always" ignora --yes (usado para o que realmente reduz a segurança)
 _confirm() {
@@ -562,18 +587,21 @@ _confirm() {
 
 _show_diff() {   # $1 atual  $2 novo
   _have diff || return 0
-  diff -u --label "$1" --label "$1 (novo)" "$1" "$2" | sed 's/^/    /' || true
+  _rt diff -u --label "$1" --label "$1 (novo)" "$1" "$2" | sed 's/^/    /' || true
 }
 
 # instala $1 (tmp) em $2, com backup ao lado e diff; $3=ask pede confirmação
 _install_file() {
-  local new=$1 dest=$2 ask=${3:-} mode bak
-  if [[ -e $dest ]]; then
-    if cmp -s "$new" "$dest"; then _msg "$dest: já está como deveria"; return 0; fi
+  local new=$1 dest=$2 ask=${3:-} mode bak ex
+  _exists "$dest"; ex=$?
+  # fail-closed: se não deu para saber se o destino existe, não escreve (senão sobrescreveria sem backup)
+  (( ex == 2 )) && { _err "não consegui verificar se $dest existe (sem acesso; o sudo falhou?). Nada foi escrito."; return 15; }
+  if (( ex == 0 )); then
+    if _rt cmp -s "$new" "$dest"; then _msg "$dest: já está como deveria"; return 0; fi
     _show_diff "$dest" "$new"
     [[ $ask == ask ]] && { _confirm "Aplicar esta alteração em $dest?" || return 16; }
     bak="$dest.nvsh-bak-$(date +%Y%m%d-%H%M%S)"
-    mode=$(stat -c %a "$dest" 2>/dev/null || echo 644)
+    mode=$(_rt stat -c %a "$dest" 2>/dev/null || echo 644)
     run_root cp -a -- "$dest" "$bak" || return 15
   else
     _msg "criando $dest:"; sed 's/^/    + /' "$new"
@@ -891,7 +919,7 @@ bl_grub() {
   case $NV_FAMILY in
     arch)
       cfg=/boot/grub/grub.cfg
-      [[ ! -e $(_p /boot/grub/grub.cfg) && -e $(_p /boot/grub2/grub.cfg) ]] && cfg=/boot/grub2/grub.cfg
+      ! _bany "$(_p /boot/grub/grub.cfg)" && _bany "$(_p /boot/grub2/grub.cfg)" && cfg=/boot/grub2/grub.cfg
       run_root grub-mkconfig -o "$cfg" || return 15 ;;
     debian|ubuntu) run_root update-grub || return 15 ;;
   esac
@@ -920,7 +948,7 @@ _limine_rewrite() {   # $1 entrada  $2 saída ; define LIM_SEEN e LIM_CHANGED
 }
 
 bl_limine() {
-  local c f tmp rc done_any=0 seen_any=0
+  local c f tmp src rc done_any=0 seen_any=0
   local -a found=()
   if [[ -e $(_p /etc/default/limine) ]]; then
     _msg "limine-entry-tool detectado (/etc/default/limine): ele regenera o limine.conf e"
@@ -933,7 +961,7 @@ bl_limine() {
            /efi/EFI/BOOT/limine.conf /boot/efi/EFI/BOOT/limine.conf \
            /boot/limine.cfg /boot/limine/limine.cfg /efi/limine.cfg /efi/limine/limine.cfg \
            /boot/efi/limine.cfg /boot/efi/limine/limine.cfg; do
-    [[ -f $(_p "$c") ]] && found+=("$c")
+    _bany "$(_p "$c")" && found+=("$c")
   done
   (( ${#found[@]} )) || { _msg "não achei o arquivo de configuração do Limine"; return 3; }
   _msg "AVISO: suporte ao Limine ainda não validado em máquina real; haverá backup ao lado de cada arquivo."
@@ -941,7 +969,12 @@ bl_limine() {
   for c in "${found[@]}"; do
     f=$(_p "$c")
     tmp=$(mktemp "${TMPDIR:-/tmp}/nvsh-limine.XXXXXX") || return 15
-    _limine_rewrite "$f" "$tmp"
+    src=$(mktemp "${TMPDIR:-/tmp}/nvsh-limine-src.XXXXXX") || { rm -f "$tmp"; return 15; }
+    # o config pode estar num /boot 0700: copia (com root, se for o caso) e reescreve a cópia
+    if ! _rt cat -- "$f" >"$src"; then
+      _err "não consegui ler $c"; rm -f "$tmp" "$src"; return 15
+    fi
+    _limine_rewrite "$src" "$tmp"; rm -f "$src"
     if (( LIM_SEEN == 0 )); then
       _msg "$c: nenhuma linha cmdline encontrada; ignorado"
     elif (( LIM_CHANGED == 0 )); then
@@ -1254,11 +1287,21 @@ inst_run() {   # assume inst_parse + nv_detect_all já executados
   inst_execute
 }
 
+# /boot 0700: sem root a detecção do bootloader é cega e o plano sairia errado, até no --dry-run. Pede o sudo antes de detectar.
+inst_boot_access() {
+  _boot_hidden || return 0
+  _msg "O /boot não é legível sem root (modo 700). Peço a senha do sudo agora para enxergar o bootloader, mesmo no --dry-run."
+  { _have sudo && sudo -v; } && return 0
+  _err "sem sudo não consigo ler o /boot, e o plano do bootloader sairia errado. Rode 'sudo -v' antes ou ajuste as permissões do /boot."
+  return 13
+}
+
 inst_main() {
   local rc
   inst_parse "$@"; rc=$?
   (( rc == 100 )) && return 0
   (( rc == 0 )) || return "$rc"
+  inst_boot_access || return $?
   nv_detect_all
   inst_run
 }
