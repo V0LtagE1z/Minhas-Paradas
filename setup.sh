@@ -16,7 +16,8 @@
 #   - temas Minecraft (GRUB + Plymouth) pulados: o Alpine usa mkinitfs e syslinux/GRUB próprios, sem initramfs-tools/dracut.
 #
 # Distros de desktop: rode como root (ou com sudo). O script
-#   0. no Arch e derivadas (pacman): garante core, extra e multilib habilitados no pacman.conf;
+#   0. no Arch e derivadas (pacman): garante core, extra e multilib habilitados no pacman.conf e liga Color e a
+#      barra de progresso (ILoveCandy);
 #      ranqueia os mirrors e atualiza o sistema (pacman -Syyu): rate-mirrors no Arch, Arch Linux ARM, EndeavourOS e Artix,
 #      cachyos-rate-mirrors no CachyOS, pacman-mirrors no Manjaro; as demais derivadas ficam como estão;
 #      só no Arch puro: instala os repositórios do CachyOS (script oficial cachyos-repo.sh);
@@ -1134,6 +1135,17 @@ sync_pacman_repos() {
   fi
 }
 
+# Cores e barra de progresso do pacman: liga Color e ILoveCandy (a barra em estilo Pac-Man) e desliga NoProgressBar.
+# Algumas distros vêm com eles desligados. Usa conf_enable/conf_disable (definidos mais abaixo): descomentam a
+# diretiva se ela existe, ou inserem em [options]. Roda no desktop e no proot; vale a partir do próximo pacman.
+enable_pacman_visuals() {
+  [[ $PM == pacman && -f $PACMAN_CONF ]] || return 0
+  [[ -e $PACMAN_CONF.bak || -e $PACMAN_CONF.setup.bak ]] || run $SUDO cp -a "$PACMAN_CONF" "$PACMAN_CONF.setup.bak"
+  conf_enable Color
+  conf_enable ILoveCandy
+  conf_disable NoProgressBar
+}
+
 # ─── apk: repositório community (Alpine e postmarketOS) ───────────────────────
 # fastfetch, zoxide, micro, fzf e kitty ficam no "community", que pode estar comentado em
 # /etc/apk/repositories (ou ausente). A regra é a mesma do pacman.conf acima:
@@ -1352,9 +1364,9 @@ conf_enable() {  # ativa uma diretiva sem valor em [options] (descomenta ou inse
   local opt=$1 conf=$PACMAN_CONF
   if grep -qE "^[[:space:]]*$opt[[:space:]]*$" "$conf"; then return 0; fi
   if grep -qE "^[[:space:]]*#[[:space:]]*$opt[[:space:]]*$" "$conf"; then
-    run sed -i -E "s/^[[:space:]]*#[[:space:]]*($opt)[[:space:]]*$/\1/" "$conf"
+    run $SUDO sed -i -E "s/^[[:space:]]*#[[:space:]]*($opt)[[:space:]]*$/\1/" "$conf"
   else
-    run sed -i "/^\[options\]/a $opt" "$conf"
+    run $SUDO sed -i "/^\[options\]/a $opt" "$conf"
   fi
   log "pacman.conf: $opt ativado"
 }
@@ -1362,7 +1374,7 @@ conf_enable() {  # ativa uma diretiva sem valor em [options] (descomenta ou inse
 conf_disable() {  # comenta uma diretiva (com ou sem valor)
   local opt=$1 conf=$PACMAN_CONF
   if grep -qE "^[[:space:]]*$opt([[:space:]=]|$)" "$conf"; then
-    run sed -i -E "s/^([[:space:]]*$opt([[:space:]=]|$))/#\1/" "$conf"
+    run $SUDO sed -i -E "s/^([[:space:]]*$opt([[:space:]=]|$))/#\1/" "$conf"
     log "pacman.conf: $opt desativado"
   fi
 }
@@ -1525,6 +1537,7 @@ prepare_proot_pacman() {
   # Só para distros com pacman dentro de proot (Arch Linux ARM e afins).
   ((PROOT)) && [[ $PM == pacman ]] || return 0
   patch_pacman_conf
+  enable_pacman_visuals
   init_keyring
   optimize_mirrors   # mirrors mais rápidos (ALARM, Arch e derivadas tratadas) antes do upgrade; já faz o -Syyu
   # Rootfs de ARM costuma ser antigo: -Sy sem -u causaria atualização parcial.
@@ -1751,6 +1764,7 @@ mirrors_only() {
 system_phase() {
   enable_apk_repos     # Alpine/postmarketOS: repositório community, antes de qualquer pacote
   enable_pacman_repos  # Arch e derivadas: core/extra/multilib no pacman.conf, antes de qualquer pacote
+  enable_pacman_visuals # Arch e derivadas: Color e barra de progresso (ILoveCandy) no pacman.conf
   optimize_mirrors     # Arch, ALARM, EndeavourOS, Artix, CachyOS, Manjaro: ranking de mirrors + atualização completa
   tune_dnf             # Fedora: downloads em paralelo no dnf.conf
   sync_pacman_repos    # se o pacman.conf mudou e nenhum -Syu rodou ainda

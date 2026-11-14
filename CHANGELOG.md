@@ -28,6 +28,21 @@ Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep 
 #### Não testado
 
 - Nada numa máquina real: só `--dry-run`, arquivos de mentira e o `pacman` ausente. Não confirmei com um `pacman -Si nvidia` real que o nome saiu do repositório (vale o aviso do Arch). O `/boot` 700 só foi exercitado com `sudo` de mentira (o ambiente de desenvolvimento roda como root e não simula acesso negado; só conferi à parte que, para um usuário sem privilégio, o `-e` dentro de um diretório 700 de root falha e o teste de "escondido" dispara): o `sudo` de verdade, com a senha, ainda precisa de um teste na sua máquina (`./nvidia.sh install --dry-run`).
+## Não lançado (branch `pacman-color-progress`, a partir da `main`)
+
+### 2026-11-13
+
+#### Adicionado
+
+- **`setup.sh`: `Color` e barra de progresso ligados no `pacman.conf`.** Em Arch e derivadas (desktop) e no proot com `pacman`, o script agora liga `Color` e `ILoveCandy` (a barra de progresso em estilo Pac-Man) e desliga `NoProgressBar`, porque algumas distros vêm com eles desligados. Se a diretiva já existe comentada, só descomenta (`#Color` vira `Color`); se não existe, insere em `[options]` (é o caso do `ILoveCandy` na maioria das distros); `NoProgressBar` ativo é comentado. Rodar de novo não muda nada. Função nova `enable_pacman_visuals`, chamada em `system_phase` (logo depois de `enable_pacman_repos`) e em `prepare_proot_pacman`. Se ainda não houver backup, guarda o original em `pacman.conf.setup.bak` (no proot já existe o `pacman.conf.bak`).
+
+#### Corrigido
+
+- **`conf_enable` e `conf_disable` agora usam `$SUDO`.** Só eram chamados no proot, onde o script já é root; como a função nova roda também no desktop (usuário normal com `sudo`), o `sed -i` no `/etc/pacman.conf` precisava dele. No proot `$SUDO` é vazio e nada muda.
+
+#### Não testado
+
+- Nada num Arch, CachyOS ou ALARM reais. Testei a função com `pacman.conf` de exemplo num diretório temporário (tudo comentado, sem as diretivas, `NoProgressBar` ativo, já certo, com espaços; todos idempotentes) e conferi que o `setup.sh --dry-run` ainda roda até o fim num sistema `apt`, onde a etapa não faz nada. Não confirmei no seu Arch se o `ILoveCandy` aparece depois do `pacman -Syu`. O `nvidia.sh` e a branch `nvidia-correcoes` já estão na `main` (PR #27) e não foram tocados por esta mudança.
 
 ## Não lançado (branch `menu-tela-alternativa-claude-atalho`, a partir da `main`)
 
