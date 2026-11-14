@@ -1098,19 +1098,21 @@ arch_ensure_paru() {
   if _have paru; then _msg "paru já instalado: $(command -v paru)"; return 0; fi
   _step "Instalando o paru (compilando da fonte, pacote AUR 'paru')"
   _msg "Necessário para os pacotes do AUR (ramo legado 580xx). Compilar leva alguns minutos."
-  local d=${TMPDIR:-/tmp}/nvsh-paru.$$
+  local d
   local -a deps=(base-devel git)
   _have cargo || deps+=(rust)
   run_root pacman -S --needed "${deps[@]}" || return 1
-  run rm -rf "$d"
-  run git clone https://aur.archlinux.org/paru.git "$d" || return 1
+  # mktemp -d: pasta 0700 com nome aleatório, criada por nós (um /tmp/nvsh-paru.<pid> previsível deixaria outro usuário plantar a pasta antes)
+  if (( OPT_DRY )); then d=${TMPDIR:-/tmp}/nvsh-paru.XXXXXX
+  else d=$(mktemp -d "${TMPDIR:-/tmp}/nvsh-paru.XXXXXX") || return 1; fi
+  run git clone https://aur.archlinux.org/paru.git "$d" || { (( OPT_DRY )) || rm -rf "$d"; return 1; }
   if (( OPT_DRY )); then
     printf '  [dry-run] (em %s) makepkg -si\n' "$d"
   else
     _msg "Quando o makepkg pedir, confirme as dependências e a instalação."
     ( cd "$d" && run makepkg -si ) || { rm -rf "$d"; return 1; }
   fi
-  run rm -rf "$d"
+  (( OPT_DRY )) || run rm -rf "$d"
   if (( ! OPT_DRY )); then hash -r; _have paru || return 1; fi
   return 0
 }

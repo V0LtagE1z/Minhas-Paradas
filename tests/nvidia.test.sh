@@ -135,6 +135,33 @@ res=$(
 )
 [[ -z $res ]] || while IFS= read -r l; do bad "inst_boot_access: $l"; done <<<"$res"
 
+# Clone do paru: pasta criada com mktemp -d (0700, nome aleatório), vazia na hora do clone e apagada no fim; no --dry-run nada é criado.
+mkdir -p "$tmp/tt"
+res=$(
+  TMPDIR=$tmp/tt; OPT_DRY=0; PKG_AUR=(x); n=0
+  _have() { case $1 in cargo) return 0 ;; paru) (( n++ )); (( n > 1 )) ;; *) return 0 ;; esac; }
+  run_root() { return 0; }
+  run() {
+    printf '%s\n' "$*" >>"$tmp/runlog"
+    case $1 in
+      git) d=${*: -1}; [[ -d $d && -z $(ls -A "$d") && $(stat -c %a "$d") == 700 ]] && echo "$d" >"$tmp/clone.ok" ;;
+      rm)  shift; rm "$@" ;;
+    esac
+    return 0
+  }
+  : >"$tmp/runlog"; rm -f "$tmp/clone.ok"
+  arch_ensure_paru >/dev/null 2>&1 || echo "arch_ensure_paru devia terminar bem"
+  [[ -s $tmp/clone.ok ]] || echo "o clone do paru devia ir para uma pasta vazia e 0700"
+  d=$(cat "$tmp/clone.ok" 2>/dev/null)
+  [[ $d =~ /nvsh-paru\.[A-Za-z0-9]{6}$ ]] || echo "a pasta do paru devia ter nome aleatório (veio $d)"
+  [[ ! -e $d ]] || echo "a pasta do paru devia ser apagada no fim"
+  OPT_DRY=1; n=0; : >"$tmp/runlog"
+  out=$(arch_ensure_paru 2>&1)
+  [[ -z $(ls -A "$tmp/tt") ]] || echo "no --dry-run não devia criar pasta nenhuma"
+  grep -qF 'nvsh-paru.XXXXXX' <<<"$out" || echo "o --dry-run devia mostrar a pasta do clone"
+)
+[[ -z $res ]] || while IFS= read -r l; do bad "paru: $l"; done <<<"$res"
+
 # Limine em --dry-run com o config num /boot escondido: acha, mostra o diff e não escreve nada.
 mkdir -p "$NVSH_ROOT/boot"; printf '/Arch\n    cmdline: root=UUID=abc rw quiet\n' > "$NVSH_ROOT/boot/limine.conf"
 res=$(

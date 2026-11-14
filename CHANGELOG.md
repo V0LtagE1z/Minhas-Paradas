@@ -14,6 +14,7 @@ Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep 
 - **`nvidia.sh`: dizer "não" a uma pergunta não aparece mais como falha.** Se você recusasse a edição do GRUB ou do Limine (saída 16), o script imprimia "um passo falhou". Agora o `inst_fail` recebe o código: com 16 diz que foi cancelado por você e que o que já foi aplicado continua; com os outros códigos a mensagem de falha é a mesma de antes.
 
 - **`nvidia.sh`: funciona com o `/boot` em modo 700.** O `archinstall` monta a ESP com `dmask=0077`, então um usuário comum não consegue nem testar a existência de arquivos dentro do `/boot` (confirmado na sua máquina: `stat -c %a /boot` deu `700`). A detecção rodava sem root e o bootloader simplesmente sumia (ou o Limine dava "não achei o arquivo de configuração"); pior, o `_install_file` tratava o `grub.cfg`/`limine.conf` "inexistente" como arquivo novo e o sobrescreveria **sem backup**. Agora: (1) o `install` pede o `sudo -v` antes de detectar quando o `/boot` ou o `/efi` não é legível, inclusive no `--dry-run`, e sai com 13 se o sudo não funcionar; (2) a detecção (`_bany`) e a leitura do `limine.conf`, o `cmp`, o `diff` e o `stat` passam por `sudo` só nesse caso; (3) a etapa 1 usa `sudo -n` (nunca pergunta senha) e, se não puder ver, avisa no relatório que a detecção pode estar incompleta; (4) o `_install_file` é fail-closed: se não dá para saber se o destino existe, sai com 15 sem escrever. Com o `/boot` em 755 nada muda e nenhum `sudo` extra roda.
+- **`nvidia.sh`: o clone do `paru` usa `mktemp -d`.** A pasta era `/tmp/nvsh-paru.<pid>`, previsível: outro usuário da máquina podia criá-la antes e o `makepkg` rodaria dentro de uma pasta que não é sua. Agora é `mktemp -d` (0700, nome aleatório, criada só depois de instalar `base-devel` e `git`), apagada no fim e também se o clone ou o `makepkg` falharem. No `--dry-run` nada é criado; o plano mostra `nvsh-paru.XXXXXX`.
 
 #### Adicionado
 
@@ -25,7 +26,7 @@ Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep 
 
 #### Não testado
 
-- Nada numa máquina real: só `--dry-run`, arquivos de mentira e o `pacman` ausente. Não confirmei com um `pacman -Si nvidia` real que o nome saiu do repositório (vale o aviso do Arch). O `/boot` 700 só foi exercitado com `sudo` de mentira (o ambiente de desenvolvimento roda como root e não simula acesso negado; só conferi à parte que, para um usuário sem privilégio, o `-e` dentro de um diretório 700 de root falha e o teste de "escondido" dispara): o `sudo` de verdade, com a senha, ainda precisa de um teste na sua máquina (`./nvidia.sh install --dry-run`). Também ficou de fora o `mktemp` no clone do `paru` (a pasta `/tmp/nvsh-paru.<pid>` é previsível).
+- Nada numa máquina real: só `--dry-run`, arquivos de mentira e o `pacman` ausente. Não confirmei com um `pacman -Si nvidia` real que o nome saiu do repositório (vale o aviso do Arch). O `/boot` 700 só foi exercitado com `sudo` de mentira (o ambiente de desenvolvimento roda como root e não simula acesso negado; só conferi à parte que, para um usuário sem privilégio, o `-e` dentro de um diretório 700 de root falha e o teste de "escondido" dispara): o `sudo` de verdade, com a senha, ainda precisa de um teste na sua máquina (`./nvidia.sh install --dry-run`).
 
 ## Não lançado (branch `menu-tela-alternativa-claude-atalho`, a partir da `main`)
 
