@@ -1,9 +1,9 @@
-# https://github.com/korvahannu/arch-nvidia-drivers-installation-guide
-
 #!/usr/bin/env bash
 # shellcheck disable=SC1090,SC2034  # fonte dinamica do os-release; NV_* sao lidas por indirecao (${!v})
 # =============================================================================
 # nvidia.sh — driver NVIDIA no Linux
+#
+# Referência: https://github.com/korvahannu/arch-nvidia-drivers-installation-guide
 #
 #   ETAPA 1  DETECÇÃO    somente leitura          ./nvidia.sh [--env]
 #   ETAPA 2  INSTALAÇÃO  altera o sistema         ./nvidia.sh install [opções]
@@ -64,7 +64,7 @@ NV_VARS=(
   NV_STATE NV_MOD_LOADED NV_MOD_KIND NV_MOD_SOURCE NV_DRV_VERSION
   NV_DRM_MODESET NV_DRM_FBDEV NV_NOUVEAU_LOADED NV_NOUVEAU_BLACKLISTED
   NV_PKGS NV_PKG_DRIVER NV_RUNFILE NV_SMI_OK
-  NV_UEFI NV_SECUREBOOT NV_BOOTLOADERS NV_INITRAMFS
+  NV_UEFI NV_SECUREBOOT NV_BOOTLOADERS NV_BOOT_BLIND NV_INITRAMFS
   NV_KERNEL NV_KERNEL_PKGBASE NV_HEADERS
   NV_TOOLS NV_SESSION NV_REPO_OK NV_REPO_NOTE
 )
@@ -73,6 +73,19 @@ NV_VARS=(
 _have() { command -v "$1" >/dev/null 2>&1; }
 _cat()  { [[ -r $1 ]] && tr -d '\0\n' <"$1"; }
 _any()  { local p; for p in "$@"; do [[ -e $p ]] && return 0; done; return 1; }
+# /boot e /efi costumam ser 0700 root (o archinstall monta a ESP com dmask=0077). Sem root, o -e dentro deles falha
+# e o bootloader "some" da detecção. _bany é o _any que enxerga esses caminhos (aceita glob), via sudo só quando preciso.
+_boot_hidden() { local d; for d in /boot /efi; do [[ -d $d && ! -x $d ]] && return 0; done; return 1; }
+_bany() {
+  local rc
+  _any "$@" && return 0
+  _boot_hidden || return 1
+  # sudo -n nunca pergunta senha: o relatório da etapa 1 não pode travar. 0 achou, 3 não achou, outro = sudo não rodou (cego)
+  sudo -n sh -c 'for p; do for f in $p; do [ -e "$f" ] && exit 0; done; done; exit 3' _ "$@" 2>/dev/null; rc=$?
+  (( rc == 0 )) && return 0
+  (( rc == 3 )) || NV_BOOT_BLIND=1
+  return 1
+}
 _glob() { compgen -G "$1" >/dev/null 2>&1; }
 _warn() { NV_WARNINGS+="$1"$'\n'; }
 _info() { NV_NOTES+="$1"$'\n'; }
@@ -292,7 +305,8 @@ nv_detect_driver() {
   case $NV_FAMILY in
     arch)
       NV_PKGS=$(pacman -Qq 2>/dev/null | grep -E \
-        '^(nvidia|nvidia-open|nvidia-dkms|nvidia-open-dkms|nvidia-lts|nvidia-open-lts|nvidia-utils|nvidia-580xx.*|linux.*-nvidia.*)$') ;;
+        '^(nvidia|nvidia-open|nvidia-dkms|nvidia-open-dkms|nvidia-lts|nvidia-open-lts|nvidia-utils|nvidia-580xx.*|linux.*-nvidia.*)$' \
+        | grep -vxF linux-firmware-nvidia) ;;   # o firmware (linux-firmware-nvidia) casa com linux.*-nvidia.*, mas não é driver
     debian|ubuntu)
       NV_PKGS=$(dpkg-query -W -f='${db:Status-Abbrev}\t${Package}\n' 2>/dev/null | awk -F'\t' \
         '$1 ~ /^ii/ && $2 ~ /^(nvidia-(driver|kernel|open|dkms|utils)|linux-(modules|objects|signatures)-nvidia)/ {print $2}') ;;
@@ -320,7 +334,7 @@ nv_detect_driver() {
 
 # ---------- 5. boot, kernel, ferramentas, repositórios -------------------------
 nv_detect_boot() {
-  NV_UEFI=0; NV_SECUREBOOT=na; NV_BOOTLOADERS=""; NV_INITRAMFS=""
+  NV_UEFI=0; NV_SECUREBOOT=na; NV_BOOTLOADERS=""; NV_BOOT_BLIND=0; NV_INITRAMFS=""
   local sbvar=/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c v
 
   if [[ -d /sys/firmware/efi ]]; then
@@ -337,16 +351,16 @@ nv_detect_boot() {
   fi
 
   local bl=() ir=()
-  _any /boot/limine.conf /boot/limine.cfg /boot/limine/limine.conf /boot/limine/limine.cfg \
-       /efi/limine.conf /efi/limine/limine.conf /boot/efi/limine.conf \
-       /boot/EFI/limine /efi/EFI/limine /boot/efi/EFI/limine && bl+=(limine)
+  _bany /boot/limine.conf /boot/limine.cfg /boot/limine/limine.conf /boot/limine/limine.cfg \
+        /efi/limine.conf /efi/limine/limine.conf /boot/efi/limine.conf \
+        /boot/EFI/limine /efi/EFI/limine /boot/efi/EFI/limine && bl+=(limine)
   { _have bootctl && bootctl is-installed >/dev/null 2>&1; } \
-    || _any /boot/loader/loader.conf /efi/loader/loader.conf /boot/efi/loader/loader.conf \
+    || _bany /boot/loader/loader.conf /efi/loader/loader.conf /boot/efi/loader/loader.conf \
     && bl+=(systemd-boot)
   _any /etc/default/grub \
-    && _any /boot/grub/grub.cfg /boot/grub2/grub.cfg /boot/efi/EFI/*/grub.cfg /efi/EFI/*/grub.cfg \
+    && _bany /boot/grub/grub.cfg /boot/grub2/grub.cfg /boot/efi/EFI/*/grub.cfg /efi/EFI/*/grub.cfg \
     && bl+=(grub)
-  _any /boot/EFI/refind /efi/EFI/refind /boot/efi/EFI/refind /boot/refind_linux.conf && bl+=(refind)
+  _bany /boot/EFI/refind /efi/EFI/refind /boot/efi/EFI/refind /boot/refind_linux.conf && bl+=(refind)
   NV_BOOTLOADERS="${bl[*]}"
 
   _have mkinitcpio       && ir+=(mkinitcpio)
@@ -413,6 +427,8 @@ nv_assess() {
   [[ $NV_STATE == active && $NV_SMI_OK == 0 ]] \
     && _warn "Módulo carregado, mas o nvidia-smi não responde."
   (( NV_REPO_OK )) || _warn "$NV_REPO_NOTE"
+  (( NV_BOOT_BLIND )) \
+    && _warn "O /boot não é legível sem root (modo 700, comum quando a ESP é montada com dmask=0077): o bootloader pode não ter sido detectado. Rode 'sudo -v' e repita, ou use 'install', que pede a senha."
   if (( $(wc -w <<<"$NV_BOOTLOADERS") > 1 )); then
     _warn "Mais de um bootloader detectado ($NV_BOOTLOADERS): confirmar qual está em uso antes de mexer em parâmetros do kernel."
   fi
@@ -549,6 +565,16 @@ run() {
 }
 run_root() { if [[ $(_euid) == 0 ]]; then run "$@"; else run sudo "$@"; fi; }
 _root()    { if [[ $(_euid) == 0 ]]; then "$@"; else sudo "$@"; fi; }   # sem eco (captura)
+# leitura que precisa enxergar dentro de um /boot 0700: com root só quando esse é o caso (o resto roda como usuário)
+_rt()      { if _boot_hidden; then _root "$@"; else "$@"; fi; }
+# 0 existe, 1 não existe, 2 não deu para saber (sudo falhou): quem escreve em seguida não pode tratar "não sei" como "não existe"
+_exists() {
+  local rc
+  [[ -e $1 ]] && return 0
+  _boot_hidden || return 1
+  _root sh -c '[ -e "$1" ] && exit 0; exit 3' _ "$1" 2>/dev/null; rc=$?
+  case $rc in 0) return 0 ;; 3) return 1 ;; *) return 2 ;; esac
+}
 
 # pergunta s/N; "always" ignora --yes (usado para o que realmente reduz a segurança)
 _confirm() {
@@ -562,18 +588,21 @@ _confirm() {
 
 _show_diff() {   # $1 atual  $2 novo
   _have diff || return 0
-  diff -u --label "$1" --label "$1 (novo)" "$1" "$2" | sed 's/^/    /' || true
+  _rt diff -u --label "$1" --label "$1 (novo)" "$1" "$2" | sed 's/^/    /' || true
 }
 
 # instala $1 (tmp) em $2, com backup ao lado e diff; $3=ask pede confirmação
 _install_file() {
-  local new=$1 dest=$2 ask=${3:-} mode bak
-  if [[ -e $dest ]]; then
-    if cmp -s "$new" "$dest"; then _msg "$dest: já está como deveria"; return 0; fi
+  local new=$1 dest=$2 ask=${3:-} mode bak ex
+  _exists "$dest"; ex=$?
+  # fail-closed: se não deu para saber se o destino existe, não escreve (senão sobrescreveria sem backup)
+  (( ex == 2 )) && { _err "não consegui verificar se $dest existe (sem acesso; o sudo falhou?). Nada foi escrito."; return 15; }
+  if (( ex == 0 )); then
+    if _rt cmp -s "$new" "$dest"; then _msg "$dest: já está como deveria"; return 0; fi
     _show_diff "$dest" "$new"
     [[ $ask == ask ]] && { _confirm "Aplicar esta alteração em $dest?" || return 16; }
     bak="$dest.nvsh-bak-$(date +%Y%m%d-%H%M%S)"
-    mode=$(stat -c %a "$dest" 2>/dev/null || echo 644)
+    mode=$(_rt stat -c %a "$dest" 2>/dev/null || echo 644)
     run_root cp -a -- "$dest" "$bak" || return 15
   else
     _msg "criando $dest:"; sed 's/^/    + /' "$new"
@@ -729,6 +758,13 @@ plan_flavor() {
 arch_plan() {
   PKG_REPO=(); PKG_AUR=()
   local pb=$NV_KERNEL_PKGBASE dkms=$OPT_DKMS hdr=""
+  # No driver 590 o Arch trocou nvidia/nvidia-dkms/nvidia-lts por nvidia-open/-open-dkms: não há módulo proprietário nos repositórios.
+  # Recusa aqui, no plano, e não no arch_verify_repo, que só roda depois do pacman -Syu.
+  if [[ $PLAN_FLAVOR == proprietary ]]; then
+    _err "No Arch o módulo proprietário saiu dos repositórios (driver 590): nvidia e nvidia-dkms viraram nvidia-open e nvidia-open-dkms."
+    _msg "Tire o --proprietary (use --open ou o automático). Maxwell/Pascal/Volta continuam no ramo legado 580xx, que é proprietário."
+    return 14
+  fi
   [[ $PLAN_FLAVOR == legacy580 ]] && dkms=1      # o AUR só oferece DKMS
   [[ $pb == linux ]] || dkms=1                   # pacote pré-compilado só p/ o kernel "linux"
   PLAN_DKMS=$dkms
@@ -743,9 +779,6 @@ arch_plan() {
   case $PLAN_FLAVOR in
     open)
       if (( dkms )); then PKG_REPO+=(nvidia-open-dkms "$hdr"); else PKG_REPO+=(nvidia-open); fi
-      PKG_REPO+=(nvidia-utils nvidia-settings) ;;
-    proprietary)
-      if (( dkms )); then PKG_REPO+=(nvidia-dkms "$hdr"); else PKG_REPO+=(nvidia); fi
       PKG_REPO+=(nvidia-utils nvidia-settings) ;;
     legacy580)
       PKG_REPO+=("$hdr"); PKG_AUR+=(nvidia-580xx-dkms nvidia-580xx-utils nvidia-580xx-settings) ;;
@@ -887,7 +920,7 @@ bl_grub() {
   case $NV_FAMILY in
     arch)
       cfg=/boot/grub/grub.cfg
-      [[ ! -e $(_p /boot/grub/grub.cfg) && -e $(_p /boot/grub2/grub.cfg) ]] && cfg=/boot/grub2/grub.cfg
+      ! _bany "$(_p /boot/grub/grub.cfg)" && _bany "$(_p /boot/grub2/grub.cfg)" && cfg=/boot/grub2/grub.cfg
       run_root grub-mkconfig -o "$cfg" || return 15 ;;
     debian|ubuntu) run_root update-grub || return 15 ;;
   esac
@@ -916,7 +949,7 @@ _limine_rewrite() {   # $1 entrada  $2 saída ; define LIM_SEEN e LIM_CHANGED
 }
 
 bl_limine() {
-  local c f tmp rc done_any=0 seen_any=0
+  local c f tmp src rc done_any=0 seen_any=0
   local -a found=()
   if [[ -e $(_p /etc/default/limine) ]]; then
     _msg "limine-entry-tool detectado (/etc/default/limine): ele regenera o limine.conf e"
@@ -929,7 +962,7 @@ bl_limine() {
            /efi/EFI/BOOT/limine.conf /boot/efi/EFI/BOOT/limine.conf \
            /boot/limine.cfg /boot/limine/limine.cfg /efi/limine.cfg /efi/limine/limine.cfg \
            /boot/efi/limine.cfg /boot/efi/limine/limine.cfg; do
-    [[ -f $(_p "$c") ]] && found+=("$c")
+    _bany "$(_p "$c")" && found+=("$c")
   done
   (( ${#found[@]} )) || { _msg "não achei o arquivo de configuração do Limine"; return 3; }
   _msg "AVISO: suporte ao Limine ainda não validado em máquina real; haverá backup ao lado de cada arquivo."
@@ -937,7 +970,12 @@ bl_limine() {
   for c in "${found[@]}"; do
     f=$(_p "$c")
     tmp=$(mktemp "${TMPDIR:-/tmp}/nvsh-limine.XXXXXX") || return 15
-    _limine_rewrite "$f" "$tmp"
+    src=$(mktemp "${TMPDIR:-/tmp}/nvsh-limine-src.XXXXXX") || { rm -f "$tmp"; return 15; }
+    # o config pode estar num /boot 0700: copia (com root, se for o caso) e reescreve a cópia
+    if ! _rt cat -- "$f" >"$src"; then
+      _err "não consegui ler $c"; rm -f "$tmp" "$src"; return 15
+    fi
+    _limine_rewrite "$src" "$tmp"; rm -f "$src"
     if (( LIM_SEEN == 0 )); then
       _msg "$c: nenhuma linha cmdline encontrada; ignorado"
     elif (( LIM_CHANGED == 0 )); then
@@ -1061,19 +1099,21 @@ arch_ensure_paru() {
   if _have paru; then _msg "paru já instalado: $(command -v paru)"; return 0; fi
   _step "Instalando o paru (compilando da fonte, pacote AUR 'paru')"
   _msg "Necessário para os pacotes do AUR (ramo legado 580xx). Compilar leva alguns minutos."
-  local d=${TMPDIR:-/tmp}/nvsh-paru.$$
+  local d
   local -a deps=(base-devel git)
   _have cargo || deps+=(rust)
   run_root pacman -S --needed "${deps[@]}" || return 1
-  run rm -rf "$d"
-  run git clone https://aur.archlinux.org/paru.git "$d" || return 1
+  # mktemp -d: pasta 0700 com nome aleatório, criada por nós (um /tmp/nvsh-paru.<pid> previsível deixaria outro usuário plantar a pasta antes)
+  if (( OPT_DRY )); then d=${TMPDIR:-/tmp}/nvsh-paru.XXXXXX
+  else d=$(mktemp -d "${TMPDIR:-/tmp}/nvsh-paru.XXXXXX") || return 1; fi
+  run git clone https://aur.archlinux.org/paru.git "$d" || { (( OPT_DRY )) || rm -rf "$d"; return 1; }
   if (( OPT_DRY )); then
     printf '  [dry-run] (em %s) makepkg -si\n' "$d"
   else
     _msg "Quando o makepkg pedir, confirme as dependências e a instalação."
     ( cd "$d" && run makepkg -si ) || { rm -rf "$d"; return 1; }
   fi
-  run rm -rf "$d"
+  (( OPT_DRY )) || run rm -rf "$d"
   if (( ! OPT_DRY )); then hash -r; _have paru || return 1; fi
   return 0
 }
@@ -1210,21 +1250,25 @@ inst_execute() {
       fedora)        fedora_install ;;
       debian|ubuntu) apt_install ;;
     esac; rc=$?
-    (( rc == 0 )) || { inst_fail; return "$rc"; }
+    (( rc == 0 )) || { inst_fail "$rc"; return "$rc"; }
   fi
-  _step "Parâmetros do kernel (modeset)";  kparams_apply; rc=$?; (( rc == 0 )) || { inst_fail; return "$rc"; }
-  _step "Initramfs";                       regen_initramfs; rc=$?; (( rc == 0 )) || { inst_fail; return "$rc"; }
+  _step "Parâmetros do kernel (modeset)";  kparams_apply; rc=$?; (( rc == 0 )) || { inst_fail "$rc"; return "$rc"; }
+  _step "Initramfs";                       regen_initramfs; rc=$?; (( rc == 0 )) || { inst_fail "$rc"; return "$rc"; }
   _step "PRIME";                           prime_setup
   _step "Snapshot (depois)";               snap_post
   inst_summary
   return 0
 }
 
-inst_fail() {
+inst_fail() {   # $1 = código de saída do passo que parou (16 = você disse não, não é falha)
   echo
-  _err "um passo falhou; nada foi desfeito automaticamente."
+  if (( ${1:-0} == 16 )); then
+    _msg "Cancelado por você; nada foi desfeito automaticamente (o que já foi aplicado continua)."
+  else
+    _err "um passo falhou; nada foi desfeito automaticamente."
+  fi
   [[ -n $SNAP_PRE && $SNAP_PRE != dry ]] && _msg "Snapshot pré: #$SNAP_PRE (snapper -c root status $SNAP_PRE..0 mostra o que mudou)."
-  _msg "Arquivos editados têm backup *.nvsh-bak-* ao lado. O script é idempotente: corrija e rode de novo."
+  _msg "Arquivos editados têm backup *.nvsh-bak-* ao lado. O script é idempotente: rode de novo (corrija o problema antes, se foi uma falha)."
 }
 
 inst_run() {   # assume inst_parse + nv_detect_all já executados
@@ -1246,11 +1290,21 @@ inst_run() {   # assume inst_parse + nv_detect_all já executados
   inst_execute
 }
 
+# /boot 0700: sem root a detecção do bootloader é cega e o plano sairia errado, até no --dry-run. Pede o sudo antes de detectar.
+inst_boot_access() {
+  _boot_hidden || return 0
+  _msg "O /boot não é legível sem root (modo 700). Peço a senha do sudo agora para enxergar o bootloader, mesmo no --dry-run."
+  { _have sudo && sudo -v; } && return 0
+  _err "sem sudo não consigo ler o /boot, e o plano do bootloader sairia errado. Rode 'sudo -v' antes ou ajuste as permissões do /boot."
+  return 13
+}
+
 inst_main() {
   local rc
   inst_parse "$@"; rc=$?
   (( rc == 100 )) && return 0
   (( rc == 0 )) || return "$rc"
+  inst_boot_access || return $?
   nv_detect_all
   inst_run
 }
@@ -1267,7 +1321,8 @@ nvidia.sh — driver NVIDIA no Linux
 Opções do install:
   -n, --dry-run        mostra o plano e os comandos, sem alterar nada
       --open           força os módulos open (Turing ou mais nova)
-      --proprietary    força os módulos proprietários (Turing a Hopper)
+      --proprietary    força os módulos proprietários (Turing a Hopper; no Arch não
+                       existe mais: o 590 trocou por open e o script recusa)
                        Maxwell/Pascal/Volta usam sempre o ramo legado 580xx
       --dkms           usa pacotes DKMS mesmo no kernel "linux" (Arch)
       --bootloader=X   auto (padrão) | grub | limine | none (usa /etc/modprobe.d)

@@ -14,7 +14,8 @@ Meus dotfiles de terminal em um script que monta tudo em uma máquina nova, seja
 | `tests/menu.test.sh` | Teste do `menu.sh` com scripts de mentira, teclas lidas de um arquivo e um `curl` de mentira (rota sem clone); confere também que a caixa fica centrada; não altera o sistema |
 | `tests/caelestia.test.sh` | Teste do `caelestia-setup.sh` com `pacman`, `paru` e `caelestia` de mentira num `HOME` temporário (ordem das chamadas, backup, `--so-atalhos`, erros) e dos dois `.lua`, carregados com o `lupa` (Python) contra uma API `hl` de mentira; não instala nada |
 | `tests/dotfiles.test.sh` | Teste do `setup.sh --dotfiles` e `--wallpapers` com um `curl` de mentira que serve os arquivos desta pasta: confere as URLs, o que é baixado, o backup `.bak`, a pasta dos wallpapers (Imagens ou Pictures) e os erros; roda num `HOME` temporário |
-| `nvidia.sh` | Detecta a GPU NVIDIA e instala o driver (open, proprietário ou legado), com modeset, initramfs e PRIME. É independente do `setup.sh` (veja "nvidia.sh") |
+| `tests/nvidia.test.sh` | Teste do `nvidia.sh` carregado com `source` e os ganchos `NVSH_*` numa pasta temporária: mesclagem dos parâmetros do kernel, edição do GRUB e do Limine em `--dry-run`, a recusa do `--proprietary` no Arch, a mensagem de cancelamento, o shebang/bit de execução e a leitura de um `/boot` 700 (com `sudo` de mentira); não instala nada e não lê o `/boot` de verdade |
+| `nvidia.sh` | Detecta a GPU NVIDIA e instala o driver (open ou legado 580xx; proprietário só fora do Arch), com modeset, initramfs e PRIME. É independente do `setup.sh` (veja "nvidia.sh") |
 | `caelestia-setup.sh` | Instala o Caelestia (shell + Hyprland) com o instalador oficial e aplica a sua config, copiando `.config/caelestia/` (`hypr-vars.lua`, `hypr-user.lua` e `shell.json`; veja "Caelestia") |
 | `oxwm-setup.sh` | Instala a configuração do OXWM (gerenciador de janelas X11), migrada do Caelestia/Hyprland; lê o `.config/oxwm/config.lua` (veja "OXWM") |
 | `.config/` | Configs no formato do `~/.config`: `kitty/` (terminal Kitty e temas claro/escuro, só distros de desktop), `oxwm/` (`config.lua` do OXWM) e `caelestia/` (a sua config do Caelestia, usada pelo `caelestia-setup.sh`) |
@@ -222,7 +223,7 @@ Um menu em tela cheia (TUI, em bash puro, sem instalar nada): caixas de bordas a
 - **`--sem-encerrar`:** o `setup.sh` normalmente pergunta no fim "Deseja encerrar a sessão?" e fecha o shell que o chamou. Sob o menu esse shell seria o próprio menu, então o item de setup passa `--sem-encerrar` e a pergunta some; use "Fechar este terminal" quando quiser fechar o terminal.
 - **Precisa do bash.** Sem ele (Alpine, por exemplo) o menu avisa e mostra o comando de instalação do gerenciador que achar (`apk add bash`, `apt-get install -y bash`...), para rodar como root; depois é só `bash menu.sh`. Com o bash instalado, `sh menu.sh` já reexecuta sozinho em bash.
 - **Rode como usuário normal.** O `setup.sh`, o `oxwm-setup.sh` e o `caelestia-setup.sh` pedem `sudo` sozinhos; o `nvidia.sh` recusa root.
-- **Testes:** `bash tests/menu.test.sh` (scripts de mentira, respostas por arquivo), `bash tests/dotfiles.test.sh` e `bash tests/caelestia.test.sh`.
+- **Testes:** `bash tests/menu.test.sh` (scripts de mentira, respostas por arquivo), `bash tests/dotfiles.test.sh`, `bash tests/caelestia.test.sh` e `bash tests/nvidia.test.sh`.
 
 ### Rodar sem clonar (`curl | bash`)
 
@@ -463,14 +464,16 @@ Script à parte do `setup.sh` (use um sem o outro, se quiser) para o driver NVID
 
 | GPU | Driver |
 | --- | ------ |
-| Turing, Ampere, Ada, Hopper | Módulos **open** (padrão recomendado pela NVIDIA); `--proprietary` troca |
+| Turing, Ampere, Ada, Hopper | Módulos **open** (padrão recomendado pela NVIDIA); `--proprietary` troca, mas só em Fedora, Ubuntu e Debian: no Arch o driver 590 trocou `nvidia` e `nvidia-dkms` por `nvidia-open` e `nvidia-open-dkms`, e o script recusa (saída 14) antes de mexer no sistema |
 | Blackwell | Só **open** |
 | Maxwell, Pascal, Volta | Ramo legado **580xx** (proprietário, DKMS pelo AUR); o ramo atual não as suporta |
 | Kepler ou mais antiga, ou Device ID desconhecido | Não escolhe sozinho (saída 14): confirme a arquitetura e use `--open` ou `--proprietary` |
 
 Passos, nesta ordem: credenciais (`sudo -v`), snapshot antes, pacotes, parâmetros do kernel, initramfs, PRIME e snapshot depois.
 
-- **Pacotes (Arch):** roda `pacman -Syu` completo (o Arch não suporta upgrade parcial), confere os nomes com `pacman -Si` e instala `nvidia-open` (ou `nvidia`) mais `nvidia-utils` e `nvidia-settings`. Usa DKMS (`nvidia-open-dkms` ou `nvidia-dkms`, com os headers) se o kernel não for o `linux`, com `--dkms` ou no ramo legado. Instala `lib32-nvidia-utils` se o `[multilib]` estiver ativo (senão avisa: Steam e Wine ficam sem as libs de 32 bits). O ramo legado vem do AUR pelo `paru`; se ele não existir, o script o compila da fonte.
+**`/boot` com modo 700.** O `archinstall` monta a ESP com `dmask=0077`, e um usuário comum não consegue nem olhar dentro do `/boot` (`stat -c %a /boot` mostra `700`). Sem root, a detecção do bootloader não enxergaria o `grub.cfg` nem o `limine.conf`. Nesse caso o `install` pede a senha do `sudo` logo no início, **também no `--dry-run`** (senão o plano sairia errado), e lê e edita esses arquivos com `sudo`. Se o sudo não funcionar, ele para (saída 13) em vez de seguir às cegas. O relatório da etapa 1 nunca pergunta senha: só avisa que a detecção pode estar incompleta e sugere rodar `sudo -v` antes. Com o `/boot` em 755 nada muda.
+
+- **Pacotes (Arch):** roda `pacman -Syu` completo (o Arch não suporta upgrade parcial), confere os nomes com `pacman -Si` e instala `nvidia-open` mais `nvidia-utils` e `nvidia-settings`. Usa DKMS (`nvidia-open-dkms`, com os headers) se o kernel não for o `linux`, com `--dkms` ou no ramo legado. Instala `lib32-nvidia-utils` se o `[multilib]` estiver ativo (senão avisa: Steam e Wine ficam sem as libs de 32 bits). O ramo legado vem do AUR pelo `paru`; se ele não existir, o script o compila da fonte.
 - **Pacotes (Fedora, Ubuntu, Debian):** RPM Fusion e akmod no Fedora, `apt` no Debian e Ubuntu. Só em `--dry-run`: a execução real exige `--allow-untested`.
 - **Parâmetros do kernel:** `nvidia-drm.modeset=1` e `nvidia-drm.fbdev=1`, pelo bootloader detectado (GRUB, com `grubby` no Fedora; ou Limine). Sem bootloader suportado, grava em `/etc/modprobe.d`. Com mais de um bootloader, para (saída 14) e pede `--bootloader=grub|limine|none`.
 - **Initramfs:** `mkinitcpio -P`, `dracut --force --regenerate-all` ou `update-initramfs -u -k all`, conforme o sistema.
@@ -483,7 +486,7 @@ Opções do `install`:
 | Opção | O que faz |
 | ----- | --------- |
 | `-n`, `--dry-run` | Mostra o plano e os comandos, sem alterar nada |
-| `--open`, `--proprietary` | Força o tipo de módulo (o legado 580xx não tem versão open) |
+| `--open`, `--proprietary` | Força o tipo de módulo (o legado 580xx não tem versão open). No Arch o `--proprietary` é recusado (saída 14) |
 | `--dkms` | Usa pacotes DKMS mesmo no kernel `linux` (Arch) |
 | `--bootloader=X` | `auto` (padrão), `grub`, `limine` ou `none` |
 | `--no-prime`, `--no-snapshot` | Não configura PRIME / não tira snapshot |

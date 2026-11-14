@@ -2,6 +2,33 @@
 
 Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto não usa versões, então as entradas são por data.
 
+## Não lançado (branch `nvidia-correcoes`, a partir da `main`)
+
+### 2026-11-12
+
+#### Corrigido
+
+- **`nvidia.sh`: o shebang agora é a linha 1.** O arquivo começava com um comentário (o link do guia do korvahannu) e o `#!/usr/bin/env bash` estava na linha 3; o kernel só lê o shebang na primeira linha, então ele era ignorado. Executar o arquivo direto, sem passar por um shell, dava `Exec format error`, e `dash nvidia.sh` dava erro de sintaxe; só o bash escondia o problema, porque executa o arquivo mesmo assim. O link virou o comentário `Referência:` do cabeçalho.
+- **`nvidia.sh` agora é executável (modo 755 no git).** Estava 644, então o `./nvidia.sh` que o README manda usar dava "Permissão negada" depois de clonar. O menu não era afetado: ele roda `bash nvidia.sh`.
+- **`nvidia.sh`: `--proprietary` no Arch é recusado no plano (saída 14).** No driver 590 o Arch trocou `nvidia` e `nvidia-dkms` (e o `nvidia-lts`) por `nvidia-open` e `nvidia-open-dkms` (e a versão LTS) ([aviso do Arch](https://archlinux.org/news/nvidia-590-driver-drops-pascal-support-main-packages-switch-to-open-kernel-modules/)), então o plano pedia pacotes que não existem mais. A conferência com `pacman -Si` pegaria o erro, mas só depois do `pacman -Syu` completo (o sistema era atualizado e o script abortava). Agora ele para antes de qualquer comando e explica; o ramo `proprietary` do `arch_plan` foi apagado. Maxwell, Pascal e Volta não mudam: seguem no legado 580xx, que é proprietário. Fora do Arch o `--proprietary` continua como estava.
+- **`nvidia.sh`: dizer "não" a uma pergunta não aparece mais como falha.** Se você recusasse a edição do GRUB ou do Limine (saída 16), o script imprimia "um passo falhou". Agora o `inst_fail` recebe o código: com 16 diz que foi cancelado por você e que o que já foi aplicado continua; com os outros códigos a mensagem de falha é a mesma de antes.
+
+- **`nvidia.sh`: funciona com o `/boot` em modo 700.** O `archinstall` monta a ESP com `dmask=0077`, então um usuário comum não consegue nem testar a existência de arquivos dentro do `/boot` (confirmado na sua máquina: `stat -c %a /boot` deu `700`). A detecção rodava sem root e o bootloader simplesmente sumia (ou o Limine dava "não achei o arquivo de configuração"); pior, o `_install_file` tratava o `grub.cfg`/`limine.conf` "inexistente" como arquivo novo e o sobrescreveria **sem backup**. Agora: (1) o `install` pede o `sudo -v` antes de detectar quando o `/boot` ou o `/efi` não é legível, inclusive no `--dry-run`, e sai com 13 se o sudo não funcionar; (2) a detecção (`_bany`) e a leitura do `limine.conf`, o `cmp`, o `diff` e o `stat` passam por `sudo` só nesse caso; (3) a etapa 1 usa `sudo -n` (nunca pergunta senha) e, se não puder ver, avisa no relatório que a detecção pode estar incompleta; (4) o `_install_file` é fail-closed: se não dá para saber se o destino existe, sai com 15 sem escrever. Com o `/boot` em 755 nada muda e nenhum `sudo` extra roda.
+- **`nvidia.sh`: o clone do `paru` usa `mktemp -d`.** A pasta era `/tmp/nvsh-paru.<pid>`, previsível: outro usuário da máquina podia criá-la antes e o `makepkg` rodaria dentro de uma pasta que não é sua. Agora é `mktemp -d` (0700, nome aleatório, criada só depois de instalar `base-devel` e `git`), apagada no fim e também se o clone ou o `makepkg` falharem. No `--dry-run` nada é criado; o plano mostra `nvsh-paru.XXXXXX`.
+- **`nvidia.sh`: o `linux-firmware-nvidia` não conta mais como driver instalado (Arch).** O padrão `linux.*-nvidia.*`, feito para kernels como `linux-cachyos-nvidia-open`, também casava com o pacote de firmware. Na sua máquina (sem nenhum driver, só `linux-firmware-nvidia`) isso virava "Driver instalado, mas o módulo NÃO está carregado" e, em cadeia, "Headers do kernel ausentes: DKMS não consegue compilar", dois avisos falsos no relatório e no plano do `install`. Achado pelo seu `--dry-run` e confirmado com o `pacman -Qs nvidia`. Só o relatório e os avisos eram afetados; o plano em si estava certo.
+
+#### Adicionado
+
+- **`tests/nvidia.test.sh`.** Carrega o `nvidia.sh` com `source` e usa os ganchos `NVSH_*` numa pasta temporária (nada é instalado, e o `/boot` não é lido): a mesclagem dos parâmetros do kernel (tira `nvidia_drm.modeset=0`, aceita `_` no lugar de `-`, mantém o resto), a edição do GRUB em `--dry-run` (aspas duplas com comentário, aspas simples, linha ausente, parâmetros já presentes, arquivo intocado), a reescrita do Limine (sintaxe nova `cmdline:` e antiga `CMDLINE=`), o plano do Arch (`--open` e o automático planejam `nvidia-open`; `--proprietary` sai com 14, de ponta a ponta sem chegar ao `pacman -Syu`; Pascal com `--proprietary` cai no legado 580xx), as mensagens do `inst_fail`, o shebang e o bit de execução, e o `/boot` 700 (com `_boot_hidden`, `_any` e `sudo` de mentira: `_bany` com arquivo, glob e ausente; sudo falhando marca a detecção como cega; boot visível não chama sudo; `_install_file` não escreve sem saber se o destino existe; `bl_limine` em `--dry-run` acha o config e mostra o diff). Contra o `nvidia.sh` anterior, falha exatamente nesses pontos.
+
+#### Alterado
+
+- README: tabela de arquivos (`tests/nvidia.test.sh` e a descrição do `nvidia.sh`), tabela de drivers e de opções do `nvidia.sh` (o `--proprietary` não vale no Arch), pacotes do Arch (só `nvidia-open` e `nvidia-open-dkms`) e a lista de testes.
+
+#### Não testado
+
+- Nada numa máquina real: só `--dry-run`, arquivos de mentira e o `pacman` ausente. Não confirmei com um `pacman -Si nvidia` real que o nome saiu do repositório (vale o aviso do Arch). O `/boot` 700 só foi exercitado com `sudo` de mentira (o ambiente de desenvolvimento roda como root e não simula acesso negado; só conferi à parte que, para um usuário sem privilégio, o `-e` dentro de um diretório 700 de root falha e o teste de "escondido" dispara): o `sudo` de verdade, com a senha, ainda precisa de um teste na sua máquina (`./nvidia.sh install --dry-run`).
+
 ## Não lançado (branch `menu-tela-alternativa-claude-atalho`, a partir da `main`)
 
 ### 2026-11-09
