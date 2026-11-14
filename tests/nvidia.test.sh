@@ -135,6 +135,21 @@ res=$(
 )
 [[ -z $res ]] || while IFS= read -r l; do bad "inst_boot_access: $l"; done <<<"$res"
 
+# Detecção de pacotes do driver (Arch): o linux-firmware-nvidia casa com o padrão linux.*-nvidia.* mas é só firmware; antes ele
+# fazia o relatório dizer "Driver instalado, mas o módulo NÃO está carregado" numa máquina sem driver nenhum.
+mkdir -p "$tmp/fakebin"
+printf '#!/bin/sh\ncat "$FAKE_PKGS"\n' > "$tmp/fakebin/pacman"; chmod +x "$tmp/fakebin/pacman"
+res=$(
+  NV_FAMILY=arch; PATH=$tmp/fakebin:$PATH; export FAKE_PKGS=$tmp/pkgs
+  printf 'linux\nlinux-firmware-nvidia\nlinux-headers\n' > "$tmp/pkgs"
+  nv_detect_driver
+  [[ -z $NV_PKGS && $NV_PKG_DRIVER == 0 && $NV_STATE == absent ]] || echo "só o firmware não é driver (NV_PKGS='$NV_PKGS', NV_STATE=$NV_STATE)"
+  printf 'linux-firmware-nvidia\nnvidia-utils\nlinux-cachyos-nvidia-open\nnvidia-580xx-dkms\n' > "$tmp/pkgs"
+  nv_detect_driver
+  [[ $NV_PKGS == "nvidia-utils linux-cachyos-nvidia-open nvidia-580xx-dkms" && $NV_PKG_DRIVER == 1 ]] || echo "os pacotes de driver têm que continuar sendo detectados (NV_PKGS='$NV_PKGS')"
+)
+[[ -z $res ]] || while IFS= read -r l; do bad "pacotes: $l"; done <<<"$res"
+
 # Clone do paru: pasta criada com mktemp -d (0700, nome aleatório), vazia na hora do clone e apagada no fim; no --dry-run nada é criado.
 mkdir -p "$tmp/tt"
 res=$(

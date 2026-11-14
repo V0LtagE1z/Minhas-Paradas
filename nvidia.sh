@@ -305,7 +305,8 @@ nv_detect_driver() {
   case $NV_FAMILY in
     arch)
       NV_PKGS=$(pacman -Qq 2>/dev/null | grep -E \
-        '^(nvidia|nvidia-open|nvidia-dkms|nvidia-open-dkms|nvidia-lts|nvidia-open-lts|nvidia-utils|nvidia-580xx.*|linux.*-nvidia.*)$') ;;
+        '^(nvidia|nvidia-open|nvidia-dkms|nvidia-open-dkms|nvidia-lts|nvidia-open-lts|nvidia-utils|nvidia-580xx.*|linux.*-nvidia.*)$' \
+        | grep -vxF linux-firmware-nvidia) ;;   # o firmware (linux-firmware-nvidia) casa com linux.*-nvidia.*, mas não é driver
     debian|ubuntu)
       NV_PKGS=$(dpkg-query -W -f='${db:Status-Abbrev}\t${Package}\n' 2>/dev/null | awk -F'\t' \
         '$1 ~ /^ii/ && $2 ~ /^(nvidia-(driver|kernel|open|dkms|utils)|linux-(modules|objects|signatures)-nvidia)/ {print $2}') ;;
