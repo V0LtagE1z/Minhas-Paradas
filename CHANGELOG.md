@@ -2,6 +2,29 @@
 
 Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto não usa versões, então as entradas são por data.
 
+## Não lançado (branch `menu-submenus`, a partir da `main`)
+
+### 2026-11-16
+
+#### Adicionado
+
+- **`menu.sh`: submenus de opções.** "Setup completo", "NVIDIA: instalar driver", "OXWM" e "Caelestia" abrem um submenu onde cada opção vira um argumento ou uma variável de ambiente do script (simular, repos do CachyOS, kernel do CachyOS, temas, locales, driver, DKMS, bootloader, PRIME, snapshot, startx, gerenciador de login...). `Enter` ou `←` `→` mudam o valor, `r` roda, `q` volta, e o comando exato aparece numa caixa que muda a cada tecla. Os itens "simular" separados (setup e NVIDIA) viraram a primeira opção do submenu.
+- **`menu.sh`: detecta o sistema e só oferece o que funciona nele.** Família (Arch, Debian, Fedora, SUSE, Alpine, Void), arquitetura, Termux, proot e WSL, com os mesmos ganchos de teste do `setup.sh`. Os repos do CachyOS, por exemplo, só aparecem no Arch e no EndeavourOS x86_64.
+- **`menu.sh`: "Mostrar todas as opções" (tecla `a`).** Mostra também o que não funciona neste sistema, em vermelho fraco (ou com `✗` sem cor), com o motivo na descrição; esses itens não rodam nem entram no comando.
+- **`tests/menu.test.sh`** reescrito: sistemas falsos (Arch, EndeavourOS, CachyOS, Ubuntu, Fedora, Alpine, SUSE, Void), conferência da largura das caixas, terminal de 40 colunas sem texto cortado em todos os sistemas (com e sem o mostrar-tudo) e os casos do mostrar-tudo (indisponível não roda, não gira, não entra no comando, cor e `✗`).
+
+#### Corrigido
+
+- **`setup.sh`: `SKIP_LOCALES`, `WSL_INSTALL_GUI` e `WSL_SET_DEFAULT_USER` sobrevivem à segunda fase.** O reexec via `sudo` e a fase do usuário não repassavam essas variáveis, então marcá-las (no menu ou na linha de comando) não surtia efeito.
+
+#### Alterado
+
+- README: seção "Menu" (teclas, itens, submenus, detecção, mostrar-tudo) e a tabela de arquivos.
+
+#### Não testado
+
+- Nada numa máquina real: só scripts de mentira, os `--dry-run` e os sistemas falsos dos testes. As cores e a tela alternativa só foram conferidas pela saída (sem terminal de verdade); falta abrir `bash menu.sh` num terminal seu e olhar o vermelho fraco em fundo claro e escuro.
+
 ## Não lançado (branch `nvidia-correcoes`, a partir da `main`)
 
 ### 2026-11-12

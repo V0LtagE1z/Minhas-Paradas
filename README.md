@@ -10,7 +10,7 @@ Meus dotfiles de terminal em um script que monta tudo em uma máquina nova, seja
 | ------- | -------------- |
 | `setup.sh` | O script principal: cria o usuário `gustavo`, instala pacotes, locales, oh-my-zsh, powerlevel10k, plugins, Kitty e fontes, aplica os dotfiles e copia os wallpapers. Funciona em distros de desktop, WSL, proot e Termux (veja "Gerenciadores e ambientes") |
 | `mirrors.sh` | Ranqueia os mirrors de novo, quando você quiser, sem refazer o resto. É só um atalho para `bash setup.sh --mirrors` (veja "Ranquear os mirrors de novo") |
-| `menu.sh` | Menu em tela cheia (TUI): escolhe o que rodar (setup, mirrors, NVIDIA, OXWM, Caelestia), pede "Tem certeza", executa o script e volta ao menu; também reinicia, desliga (não no Termux nem no proot) e fecha o terminal; roda também sem clonar, por `curl ... \| bash`, baixando só o script do item escolhido (veja "Menu") |
+| `menu.sh` | Menu em tela cheia (TUI): detecta o sistema, mostra só o que funciona nele (ou tudo, com o que não funciona em vermelho fraco), tem submenus de opções (simular, repos, driver...) para o setup, a NVIDIA, o OXWM e o Caelestia, pede "Tem certeza", executa o script e volta ao menu; também reinicia, desliga (não no Termux nem no proot) e fecha o terminal; roda também sem clonar, por `curl ... \| bash`, baixando só o script do item escolhido (veja "Menu") |
 | `tests/menu.test.sh` | Teste do `menu.sh` com scripts de mentira, teclas lidas de um arquivo e um `curl` de mentira (rota sem clone); confere também que a caixa fica centrada; não altera o sistema |
 | `tests/caelestia.test.sh` | Teste do `caelestia-setup.sh` com `pacman`, `paru` e `caelestia` de mentira num `HOME` temporário (ordem das chamadas, backup, `--so-atalhos`, erros) e dos dois `.lua`, carregados com o `lupa` (Python) contra uma API `hl` de mentira; não instala nada |
 | `tests/dotfiles.test.sh` | Teste do `setup.sh --dotfiles` e `--wallpapers` com um `curl` de mentira que serve os arquivos desta pasta: confere as URLs, o que é baixado, o backup `.bak`, a pasta dos wallpapers (Imagens ou Pictures) e os erros; roda num `HOME` temporário |
@@ -196,30 +196,44 @@ Um menu em tela cheia (TUI, em bash puro, sem instalar nada): caixas de bordas a
 | Tecla | O que faz |
 | ----- | --------- |
 | `↑` `↓` (ou `k` `j`) | Move a seleção; dá a volta nas pontas |
-| `Enter` | Executa o item selecionado |
-| `q` | Sai do menu |
+| `Enter` | Executa o item selecionado (ou abre o submenu dele) |
+| `a` | Liga/desliga "Mostrar todas as opções" |
+| `q` | Sai do menu (dentro de um submenu, volta) |
 
-| Item | O que roda | "Tem certeza"? |
-| ---- | ---------- | -------------- |
-| Setup completo | `setup.sh --sem-encerrar` | sim |
-| Setup (só simular) | `setup.sh --dry-run --sem-encerrar` | não |
-| Dotfiles: só aplicar | `setup.sh --dotfiles` (veja "Só os dotfiles") | sim |
-| Ranquear os mirrors | `mirrors.sh` (no Arch e derivadas atualiza o sistema inteiro) | sim |
-| Reverter temas Minecraft | `setup.sh --reverter-temas` | sim |
-| NVIDIA: detectar GPU | `nvidia.sh` (só leitura) | não |
-| NVIDIA: instalar driver | `nvidia.sh install` | sim |
-| NVIDIA: simular instalação | `nvidia.sh install --dry-run` | não |
-| OXWM: instalar configuração | `oxwm-setup.sh` | sim |
-| Caelestia: instalar + atalhos | `caelestia-setup.sh` (veja "Caelestia") | sim |
-| Reiniciar, Desligar | `reboot`, `poweroff` (com `sudo` ou `doas`) | sim (no WSL, não: veja abaixo) |
-| Fechar este terminal | Manda SIGHUP ao shell que chamou o menu. Se o menu foi chamado por `sudo`, não acha o shell com segurança e pede para você digitar `exit` | sim |
-| Sair do menu | Sai só do menu; o terminal continua aberto | não |
+Dentro de um submenu: `Enter` ou `←` `→` mudam o valor da opção selecionada, `r` roda com o que está marcado e `q` volta. O comando exato que vai rodar aparece numa caixa embaixo e muda a cada tecla. A primeira opção é sempre a simulação (`--dry-run`), desligada por padrão; se ela estiver ligada, o comando roda sem pedir "Tem certeza".
 
-- **"Tem certeza que deseja (ação)?"** Aparece um diálogo com os botões `Sim` e `Não`. O padrão é **Não**: `Enter` direto cancela. `←` `→` trocam o botão; `s` confirma; `n`, `q` e `Esc` cancelam. Simulações e a detecção da NVIDIA não perguntam. O `nvidia.sh install` pergunta de novo por conta própria.
+| Item | O que faz | Aparece quando |
+| ---- | --------- | -------------- |
+| Setup completo | Submenu do `setup.sh --sem-encerrar` (opções abaixo) | sempre |
+| Dotfiles: só aplicar | `setup.sh --dotfiles` (veja "Só os dotfiles") | sempre |
+| Ranquear os mirrors | `mirrors.sh` (no Arch e derivadas atualiza o sistema inteiro) | Arch e derivadas, Fedora de desktop, Termux |
+| Reverter temas Minecraft | `setup.sh --reverter-temas` | desktop, fora do WSL e do Alpine |
+| NVIDIA: detectar GPU | `nvidia.sh` (só leitura) | desktop, fora do WSL |
+| NVIDIA: instalar driver | Submenu do `nvidia.sh install` | Arch, Debian/Ubuntu e Fedora de desktop, fora do WSL |
+| OXWM: instalar configuração | Submenu do `oxwm-setup.sh` | desktop (não Termux nem proot) |
+| Caelestia: instalar + atalhos | Submenu do `caelestia-setup.sh` (veja "Caelestia") | desktop (não Termux nem proot) |
+| Mostrar todas as opções | Liga/desliga a lista completa (veja abaixo) | sempre |
+| Reiniciar, Desligar | `reboot`, `poweroff` (com `sudo` ou `doas`) | fora do Termux e do proot |
+| Fechar este terminal | Manda SIGHUP ao shell que chamou o menu. Se o menu foi chamado por `sudo`, não acha o shell com segurança e pede para você digitar `exit` | sempre |
+| Sair do menu | Sai só do menu; o terminal continua aberto | sempre |
+
+Opções dos submenus (cada uma vira um argumento ou uma variável de ambiente do script; só as que funcionam no seu sistema aparecem):
+
+| Submenu | Opções |
+| ------- | ------ |
+| Setup | Simular (`--dry-run`); Mirrors (`SKIP_MIRRORS`); `core/extra/multilib` (`SKIP_PACMAN_REPOS`, só Arch de verdade); Repos do CachyOS (`--sem-cachyos-repo`, só Arch e EndeavourOS x86_64); Kernel do CachyOS (`--kernel-cachyos` / `--sem-kernel-cachyos`, só Fedora x86_64); Temas Minecraft (`--temas-minecraft` / `--sem-temas-minecraft`); Locales (`SKIP_LOCALES`); repositório `community` (`SKIP_APK_REPOS`, só Alpine); Kitty e fonte e usuário padrão (`WSL_INSTALL_GUI`, `WSL_SET_DEFAULT_USER`, só WSL); no Termux: mirrors, `pkg update + upgrade`, repositórios extras e o Arch no proot-distro (`SKIP_TERMUX_*`); Dotfiles (`--clonar-repo`) |
+| NVIDIA | Simular; Driver (`--open`, e `--proprietary` fora do Arch); Módulo (`--dkms`); Bootloader (`--bootloader=`); PRIME (`--no-prime`); Snapshot (`--no-snapshot`); fora do Arch, `--allow-untested` |
+| OXWM | Simular; `--startx`; gerenciador de login (`--dm=sddm` ou `--dm=lightdm`); `--sem-sistema` (nos sistemas sem instalação de pacotes ela já vem marcada) |
+| Caelestia | Simular; instalar tudo ou só a config (`--so-atalhos`; fora do Arch só a config) |
+
+- **Detecção do sistema.** O menu lê o `/etc/os-release` (`ID` e `ID_LIKE`), a arquitetura, o `PREFIX` do Termux, o kernel (WSL, proot) e o `/etc/arch-release`, os mesmos ganchos de teste do `setup.sh` (`OS_RELEASE_FILE`, `ARCH_RELEASE_FILE`, `UNAME_M`, `KERNEL_RELEASE`, `FORCE_PROOT`). Por exemplo, os repos do CachyOS só aparecem no Arch e no EndeavourOS x86_64; o CachyOS OS em si não conta, porque já traz os repositórios.
+- **Mostrar todas as opções.** Por padrão o menu e os submenus só trazem o que funciona neste sistema. Com `a` (ou `Enter` no item "Mostrar todas as opções") o que ficou de fora aparece em **vermelho fraco** (`\e[38;5;131m`, legível em fundo claro e escuro); a descrição diz "Não funciona neste sistema" e o motivo. Esses itens e opções **não rodam**, não giram com `Enter` e não entram no comando. Sem cor (`NO_COLOR=1` ou `TERM=dumb`) eles ganham um `✗` no lugar do marcador. A seleção continua no mesmo item ao ligar e desligar.
+
+- **"Tem certeza que deseja (ação)?"** Aparece um diálogo com os botões `Sim` e `Não`. O padrão é **Não**: `Enter` direto cancela. `←` `→` trocam o botão; `s` confirma; `n`, `q` e `Esc` cancelam. Simulações (`--dry-run` ligado no submenu) e a detecção da NVIDIA não perguntam. O `nvidia.sh install` pergunta de novo por conta própria.
 - **Termux e proot: Reiniciar e Desligar não aparecem**, porque lá não há o que reiniciar. O menu detecta pelo `PREFIX` do Termux, pelo kernel com `proot` no nome ou por o processo estar sob ptrace (que é o proot; um `strace`/`gdb` também esconde os itens). `FORCE_PROOT=1` força o modo proot, e `FORCE_PROOT=0` desliga a detecção por ptrace (mesmos nomes do `setup.sh`).
 - **WSL:** Reiniciar e Desligar aparecem, mas não fazem nada: mostram o comando certo, `wsl --shutdown`, para rodar no Windows (PowerShell ou CMD). Isso para todas as distros WSL; depois é só abrir a distro de novo.
 - **Visual:** a largura segue o terminal (de 36 a 72 colunas, então cabe no Termux em pé) e a caixa fica **centrada**, na horizontal e na vertical (terminal mais baixo que o menu: começa no topo; mais estreito que 36 colunas: sem margem). A posição é recalculada a cada tela desenhada, ou seja, a cada tecla; se você redimensionar a janela, o menu se ajusta na próxima tecla, não na hora. `NO_COLOR=1` ou `TERM=dumb` desligam as cores e a tela alternativa (cada quadro sai embaixo do anterior). O menu assume terminal UTF-8 (bordas e `❯`); o console do Linux sem fonte unicode mostra as bordas quebradas. Num sistema sem locale UTF-8 (rootfs mínimo) ele usa `C.UTF-8` só para contar as colunas direito.
-- **O menu escolhe o script, não cada etapa dentro dele.** O `setup.sh` continua sendo um bloco só (pacotes, usuário, dotfiles...); quem quiser pular partes usa as opções e variáveis dele (`--help`).
+- **O que o menu não cobre.** Os submenus trazem as opções que mudam o resultado e valem para o seu sistema; o resto das opções e variáveis do `setup.sh` (`--help`) continua só na linha de comando.
 - **`--sem-encerrar`:** o `setup.sh` normalmente pergunta no fim "Deseja encerrar a sessão?" e fecha o shell que o chamou. Sob o menu esse shell seria o próprio menu, então o item de setup passa `--sem-encerrar` e a pergunta some; use "Fechar este terminal" quando quiser fechar o terminal.
 - **Precisa do bash.** Sem ele (Alpine, por exemplo) o menu avisa e mostra o comando de instalação do gerenciador que achar (`apk add bash`, `apt-get install -y bash`...), para rodar como root; depois é só `bash menu.sh`. Com o bash instalado, `sh menu.sh` já reexecuta sozinho em bash.
 - **Rode como usuário normal.** O `setup.sh`, o `oxwm-setup.sh` e o `caelestia-setup.sh` pedem `sudo` sozinhos; o `nvidia.sh` recusa root.
