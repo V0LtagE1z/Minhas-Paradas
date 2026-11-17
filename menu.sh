@@ -350,7 +350,7 @@ sub_setup() {
   sopt_if '((DESKTOP)) && [[ $FAM == arch ]]' "só em distro Arch de verdade" "core/extra/multilib" "Garante os três repositórios|ativos no pacman.conf" "ajustar|não mexer" "-|SKIP_PACMAN_REPOS=1"
   sopt_if can_cachy "só Arch ou EndeavourOS x86_64" "Repos do CachyOS" "Instala os repositórios do CachyOS|(snapshot antes, se tiver snapper)" "instalar|pular" "-|--sem-cachyos-repo"
   sopt_if '((DESKTOP)) && [[ $SYS_ID == fedora && $ARCH_M == x86_64 ]] && ! is_wsl' "só Fedora x86_64 (fora do WSL)" "Kernel do CachyOS" "Kernel do CachyOS (COPR); o do|Fedora continua no menu do GRUB" "perguntar|instalar|pular" "-|--kernel-cachyos|--sem-kernel-cachyos"
-  sopt_if can_themes "WSL, Alpine, Termux, proot-distro" "Temas Minecraft" "GRUB + Plymouth; mexe no|bootloader e no initramfs" "perguntar|instalar|pular" "-|--temas-minecraft|--sem-temas-minecraft"
+  sopt_if can_themes "Nem no WSL, Alpine, Termux, proot-distro" "Temas Minecraft" "GRUB + Plymouth; mexe no|bootloader e no initramfs" "perguntar|instalar|pular" "-|--temas-minecraft|--sem-temas-minecraft"
   sopt_if '((DESKTOP))' "só em distro de verdade" "Locales" "Gera pt_BR e en_US (UTF-8) e grava|LANG e LC_MESSAGES" "gerar|pular" "-|SKIP_LOCALES=1"
   sopt_if '((DESKTOP)) && [[ $FAM == alpine ]]' "só no Alpine" "Repositório community" "Habilita o community em|/etc/apk/repositories" "habilitar|manter" "-|SKIP_APK_REPOS=1"
   sopt_if '((DESKTOP)) && is_wsl' "só no WSL" "Kitty e fonte no Linux" "No WSL o terminal e a fonte são|os do Windows; instalar é opcional" "não|instalar" "-|WSL_INSTALL_GUI=1"
