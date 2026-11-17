@@ -265,7 +265,7 @@ paint() {  # quadro — o quadro todo sai de uma vez, por cima do anterior; $NL 
 
 draw() {
   local i d1 d2
-  if ((${AV[sel]})); then d1=${DESC[sel]%%|*}; d2=${DESC[sel]#*|}; else d1="Não funciona nos sistemas:"; d2=${WHY[sel]}; fi
+  if ((${AV[sel]})); then d1=${DESC[sel]%%|*}; d2=${DESC[sel]#*|}; else d1="Não funciona nesse sistema:"; d2=${WHY[sel]}; fi
   paint "$(
     layout $((N + 9))   # 3 caixas (N itens + 2 bordas cada, +2 linhas de descrição) + a linha de teclas
     box_top "Minhas-Paradas"
@@ -411,7 +411,7 @@ sub_draw() {  # ssel (do submenu): 0..n-1 são as opções, n é "Executar" e n+
       IFS='|' read -ra vs <<<"${SN[i]}"
       for x in "${vs[@]}"; do ((${#x} > mv)) && mv=${#x}; done
     done
-    if ((ssel < n)) && [[ -n ${SU[ssel]} ]]; then d1="Não funciona nos sistemas:"; d2=${SU[ssel]}
+    if ((ssel < n)) && [[ -n ${SU[ssel]} ]]; then d1="Não funciona nesse sistema:"; d2=${SU[ssel]}
     elif ((ssel < n)); then d1=${SD[ssel]%%|*}; d2=""; [[ ${SD[ssel]} == *'|'* ]] && d2=${SD[ssel]#*|}
     elif ((ssel == n)); then d1="Roda o comando mostrado abaixo"; d2="Enter aqui ou r em qualquer linha"
     else d1="Volta ao menu sem rodar nada"; d2=""; fi
