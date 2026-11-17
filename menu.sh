@@ -189,7 +189,7 @@ pause() { printf '\nEnter para voltar ao menu... '; read -r -u 3 _ || exit 0; }
 # ─── Itens: condição | motivo | rótulo | descrição (2 linhas separadas por "|") | "Tem certeza que deseja <isto>?" (vazio = sem pergunta) | comando
 # Comando "sub:nome" abre o submenu de opções (sub_nome monta as opções deste sistema); "toggle_all" liga/desliga o mostrar-tudo.
 # O que não funciona neste sistema (a condição, avaliada com eval, falha) só entra no menu com "Mostrar todas as opções":
-# em vermelho fraco, com o motivo na descrição, e sem rodar. AV é 1 se funciona aqui e 0 se não.
+# em vermelho, com o motivo na descrição, e sem rodar. AV é 1 se funciona aqui e 0 se não.
 SHOWALL=0
 LBL=(); DESC=(); CONF=(); CMD=(); AV=(); WHY=()
 item() {
@@ -198,21 +198,21 @@ item() {
   LBL+=("$3"); DESC+=("$4"); CONF+=("$5"); CMD+=("$6"); AV+=("$ok"); WHY+=("$2")
 }
 build_menu() {
-  local nv_why="WSL, Termux, proot" c_reb="reiniciar o computador" c_off="desligar o computador" all=não
+  local nv_why="Nem no WSL, Termux, proot-distro" c_reb="reiniciar o computador" c_off="desligar o computador" all=não
   LBL=(); DESC=(); CONF=(); CMD=(); AV=(); WHY=()
   can_nvidia && nv_why="só Arch, Debian/Ubuntu, Fedora"
   item true "" "Setup completo" "Escolha as opções e rode o setup|(simular, repos, temas...)" "" "sub:setup"
   item true "" "Dotfiles: só aplicar" "Baixa e aplica .zshrc, p10k e|kitty.conf (backup .bak)" "aplicar só os dotfiles" "run_script setup.sh --dotfiles"
   item can_mirrors "Arch, Fedora e Termux" "Ranquear os mirrors" "Ranqueia os mirrors; no Arch|também atualiza o sistema" "ranquear os mirrors" "run_script mirrors.sh"
-  item can_themes "Nem no WSL, Alpine, Termux, proot-distro" "Reverter temas Minecraft" "Desfaz os temas Minecraft|(GRUB + Plymouth)" "reverter os temas Minecraft" "run_script setup.sh --reverter-temas"
-  item can_nvidia "Nem no WSL, Termux, proot" "NVIDIA: detectar GPU" "Detecta a GPU e o ambiente|(só leitura)" "" "run_script nvidia.sh"
+  item can_themes "Nem no WSL, Termux, proot-distro, Alpine" "Reverter temas Minecraft" "Desfaz os temas Minecraft|(GRUB + Plymouth)" "reverter os temas Minecraft" "run_script setup.sh --reverter-temas"
+  item can_nvidia "$nv_why" "NVIDIA: detectar GPU" "Detecta a GPU e o ambiente|(só leitura)" "" "run_script nvidia.sh"
   item can_nvidia_install "$nv_why" "NVIDIA: instalar driver" "Escolha as opções e instale o|driver NVIDIA (simular, PRIME...)" "" "sub:nvidia"
   item '((DESKTOP))' "não roda no Termux nem proot" "OXWM: instalar configuração" "Escolha as opções (startx, login)|e instale a config. do OXWM" "" "sub:oxwm"
   item '((DESKTOP))' "não roda no Termux nem proot" "Caelestia: instalar + atalhos" "Escolha as opções e instale o|Caelestia, ou só a config (Arch)" "" "sub:caelestia"
   NINST=${#LBL[@]}
   ((SHOWALL)) && all=sim
   is_wsl && { c_reb=""; c_off=""; }   # no WSL só aparece o aviso
-  item true "" "Mostrar todas as opções: $all" "Inclui o que não funciona aqui|em vermelho fraco, sem rodar" "" toggle_all
+  item true "" "Mostrar todas as opções: $all" "Inclui o que não funciona aqui|em vermelho, sem rodar" "" toggle_all
   item '! no_power' "Termux e proot não têm isso" "Reiniciar" "Reinicia o computador|(pede sudo ou doas)" "$c_reb" "power reboot reiniciar"
   item '! no_power' "Termux e proot não têm isso" "Desligar"  "Desliga o computador|(pede sudo ou doas)"  "$c_off" "power poweroff desligar"
   item true "" "Fechar este terminal" "Fecha este terminal|(SIGHUP no shell que chamou)" "fechar este terminal" close_terminal
@@ -247,11 +247,11 @@ box_top() {  # título — W é a largura da caixa, LP a margem esquerda
   printf '%s%s╭─%s%s╮%s\n' "$LP" "$ACC" "$t" "${d// /─}" "$OFF"
 }
 box_bottom() { local d; printf -v d '%*s' $((W - 2)) ''; printf '%s%s╰%s╯%s\n' "$LP" "$ACC" "${d// /─}" "$OFF"; }
-box_row() {  # texto [1 = selecionado] [1 = não funciona aqui: vermelho fraco]
+box_row() {  # texto [1 = selecionado] [1 = não funciona aqui: vermelho]
   local t=$1 m="  " st="" en="" pad
   ((${#t} > W - 6)) && t="${t:0:W-7}…"
   if [[ ${2:-} == 1 ]]; then m="${ACC}❯${OFF} "; st=$REV; en=$OFF; fi
-  if [[ ${3:-} == 1 ]]; then   # não funciona aqui: vermelho fraco; sem cor (dumb/NO_COLOR) um ✗ no lugar do ❯, que não custa largura
+  if [[ ${3:-} == 1 ]]; then   # não funciona aqui: vermelho; sem cor (dumb/NO_COLOR) um ✗ no lugar do ❯, que não custa largura
     st+=$RED; en=$OFF
     [[ -n $RED || ${2:-} == 1 ]] || m="✗ "
   fi
@@ -315,7 +315,7 @@ confirm() {  # ação — "Tem certeza que deseja <ação>?"; o padrão é Não
 # Um submenu é uma lista de opções. Cada opção gira entre valores (←/→, Espaço ou Enter) e cada valor vira nada ("-"),
 # um argumento (--dry-run) ou uma variável de ambiente (SKIP_LOCALES=1) na linha de comando que o menu monta, mostra
 # embaixo e passa ao run_script. Só entra a opção que funciona neste sistema (quem monta decide); com "mostrar todas" as
-# outras entram em vermelho fraco, sem girar e sem contar na linha de comando (SU guarda o motivo; vazio = funciona).
+# outras entram em vermelho, sem girar e sem contar na linha de comando (SU guarda o motivo; vazio = funciona).
 SL=() SD=() SN=() SA=() SV=() SU=() SUB_BASE=() RUN=()
 SUB_SCRIPT="" SUB_CONF=""
 sub_reset() { SL=() SD=() SN=() SA=() SV=() SU=() SUB_BASE=() RUN=() SUB_SCRIPT="" SUB_CONF=""; }
