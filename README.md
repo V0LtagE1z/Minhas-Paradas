@@ -4,6 +4,11 @@
 
 Meus dotfiles de terminal em um script que monta tudo em uma máquina nova, seja uma distro Linux ou o Termux.
 
+### Uso rápido
+```
+curl -fsSL https://raw.githubusercontent.com/V0LtagE1z/Minhas-Paradas/main/menu.sh | bash
+```
+
 ## Conteúdo
 
 | Caminho | Para que serve |
