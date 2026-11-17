@@ -198,14 +198,14 @@ item() {
   LBL+=("$3"); DESC+=("$4"); CONF+=("$5"); CMD+=("$6"); AV+=("$ok"); WHY+=("$2")
 }
 build_menu() {
-  local nv_why="não roda no WSL, Termux, proot" c_reb="reiniciar o computador" c_off="desligar o computador" all=não
+  local nv_why="WSL, Termux, proot" c_reb="reiniciar o computador" c_off="desligar o computador" all=não
   LBL=(); DESC=(); CONF=(); CMD=(); AV=(); WHY=()
   can_nvidia && nv_why="só Arch, Debian/Ubuntu, Fedora"
   item true "" "Setup completo" "Escolha as opções e rode o setup|(simular, repos, temas...)" "" "sub:setup"
   item true "" "Dotfiles: só aplicar" "Baixa e aplica .zshrc, p10k e|kitty.conf (backup .bak)" "aplicar só os dotfiles" "run_script setup.sh --dotfiles"
-  item can_mirrors "só Arch, Fedora e Termux" "Ranquear os mirrors" "Ranqueia os mirrors; no Arch|também atualiza o sistema" "ranquear os mirrors" "run_script mirrors.sh"
-  item can_themes "sem WSL, Alpine, Termux, proot" "Reverter temas Minecraft" "Desfaz os temas Minecraft|(GRUB + Plymouth)" "reverter os temas Minecraft" "run_script setup.sh --reverter-temas"
-  item can_nvidia "não roda no WSL, Termux, proot" "NVIDIA: detectar GPU" "Detecta a GPU e o ambiente|(só leitura)" "" "run_script nvidia.sh"
+  item can_mirrors "Arch, Fedora e Termux" "Ranquear os mirrors" "Ranqueia os mirrors; no Arch|também atualiza o sistema" "ranquear os mirrors" "run_script mirrors.sh"
+  item can_themes "WSL, Alpine, Termux, proot" "Reverter temas Minecraft" "Desfaz os temas Minecraft|(GRUB + Plymouth)" "reverter os temas Minecraft" "run_script setup.sh --reverter-temas"
+  item can_nvidia "WSL, Termux, proot" "NVIDIA: detectar GPU" "Detecta a GPU e o ambiente|(só leitura)" "" "run_script nvidia.sh"
   item can_nvidia_install "$nv_why" "NVIDIA: instalar driver" "Escolha as opções e instale o|driver NVIDIA (simular, PRIME...)" "" "sub:nvidia"
   item '((DESKTOP))' "não roda no Termux nem proot" "OXWM: instalar configuração" "Escolha as opções (startx, login)|e instale a config. do OXWM" "" "sub:oxwm"
   item '((DESKTOP))' "não roda no Termux nem proot" "Caelestia: instalar + atalhos" "Escolha as opções e instale o|Caelestia, ou só a config (Arch)" "" "sub:caelestia"
