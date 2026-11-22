@@ -2,6 +2,36 @@
 
 Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto não usa versões, então as entradas são por data.
 
+## Não lançado (branch `termux-alarm-rootfs-oficial`, a partir da `main`)
+
+### 2026-11-22
+
+#### Alterado
+
+- **`setup.sh` (Termux, aarch64): Arch Linux ARM pelo rootfs oficial, baixado localmente e com assinatura verificada.** Antes o `proot-distro` instalava a imagem de terceiros `danhunsaker/archlinuxarm:latest`, que (pelo relato do autor) deixou de ter suporte a ARM. Agora `fetch_alarm_rootfs` baixa `ArchLinuxARM-aarch64-latest.tar.gz` e o `.sig` de `os.archlinuxarm.org` para uma pasta temporária e `verify_alarm_rootfs` confere a assinatura PGP num chaveiro temporário (o `~/.gnupg` não é tocado). Só então roda `proot-distro install --name archlinuxarm <arquivo local>` e apaga o download.
+- **A verificação falha fechada.** A única âncora de confiança é o fingerprint `68B3537F39A313B3E574D06777193F152BDBE6A6` (*Arch Linux ARM Build System*, conforme `archlinuxarm.org/about/package-signing`); a chave vem de um keyserver (`keyserver.ubuntu.com`, com `keys.openpgp.org` de reserva) e só vale se for exatamente essa. A assinatura precisa ser `GOODSIG`, sem `BADSIG`/`ERRSIG`/`EXPSIG`/`EXPKEYSIG`/`REVKEYSIG`, e um `VALIDSIG` com esse fingerprint. Download que falha, `.sig` ausente, keyserver fora do ar ou assinatura que não confere: nada é instalado, o script avisa, apaga o download e registra a falha no resumo final.
+- O `gnupg` é instalado com `pkg install gnupg` se o `gpg` não existir (só no caminho do ALARM).
+- **x86_64 não mudou:** o `proot-distro` continua instalando a imagem oficial `archlinux:latest` como `archlinux`. Outras arquiteturas (ex.: armv7) agora são puladas com um aviso claro, em vez de tentar a imagem de ARM e falhar.
+- "Já instalado" agora também reconhece a pasta do container (`$PREFIX/var/lib/proot-distro/containers/<nome>`), porque um rootfs instalado por arquivo local pode não aparecer em `proot-distro list` com o mesmo formato.
+- `TERMUX_PROOT_IMAGE` passa a ser vazio em aarch64 (o padrão de x86_64 continua `archlinux:latest`). Se você a definir, ela ganha do rootfs do ALARM e **não passa pela verificação de assinatura**.
+
+#### Removido
+
+- **A instalação via `danhunsaker/archlinuxarm`** (valor padrão, comentários, `--help` e README). Só restam menções históricas neste changelog.
+
+#### Adicionado
+
+- **`tests/alarm-rootfs.test.sh`:** roda as funções do `setup.sh` com um GnuPG de verdade e chaves de teste (keyserver, `curl` e `proot-distro` de mentira). Cobre: assinatura boa (instala o arquivo local e apaga o download), arquivo adulterado, assinatura de outra chave, keyserver que entrega a chave errada, chave expirada, `.sig` ausente, keyserver fora do ar, container já instalado, x86_64, `TERMUX_PROOT_IMAGE` próprio, armv7l, `SKIP_TERMUX_PROOT=1`, `--dry-run` e `proot-distro install` falhando. Também foi conferido por mutação que o teste falha se a verificação for desligada.
+
+#### Planejado
+
+- **Outras opções de distro no proot virão depois**, escolhidas pelo autor. Por enquanto só o Arch Linux ARM (aarch64) e o Arch Linux (x86_64).
+
+#### Não testado
+
+- **Nada num Termux real e nada baixado do servidor de verdade.** Não consegui confirmar de fora que o `.sig` do `ArchLinuxARM-aarch64-latest.tar.gz` existe em `os.archlinuxarm.org` (o ambiente não alcança o site); se não existir, o script se recusa a instalar. Também não confirmei que o `proot-distro install <arquivo local>` extrai o rootfs do ALARM sem problemas, nem que `proot-distro login` funciona depois (um tarball local não gera `manifest.json`: `reset` e `run` não funcionam). Os testes usam um `curl` e um `proot-distro` de mentira.
+- Os testes `tests/menu.test.sh` e `tests/caelestia.test.sh` já falhavam na `main` limpa neste ambiente de verificação (confirmado rodando-os na `main`); não têm relação com esta mudança.
+
 ## Não lançado (branch `menu-submenus`, a partir da `main`)
 
 ### 2026-11-16

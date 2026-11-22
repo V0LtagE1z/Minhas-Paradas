@@ -166,10 +166,11 @@ DESKTOP_PACKAGES=(kitty fontconfig)
 #   SKIP_TERMUX_UPGRADE=1  pula o update/upgrade completo (só atualiza o índice, com "pkg update");
 #   SKIP_TERMUX_REPOS=1    não habilita os repositórios adicionais;
 #   SKIP_TERMUX_PROOT=1    não instala a distro do proot-distro (o pacote proot-distro continua sendo instalado);
-#   TERMUX_PROOT_IMAGE     imagem OCI que o proot-distro instala (padrão: danhunsaker/archlinuxarm:latest em ARM;
-#                          archlinux:latest, a imagem oficial do Arch, em x86_64);
-#   TERMUX_PROOT_NAME      nome do container local, o que você usa em "proot-distro login" (padrão: archlinuxarm em ARM;
-#                          archlinux em x86_64).
+#   TERMUX_PROOT_IMAGE     imagem OCI que o proot-distro instala (padrão: archlinux:latest, a imagem oficial do Arch, em
+#                          x86_64; vazio em aarch64, onde vale o rootfs oficial do Arch Linux ARM, verificado). Se você
+#                          definir, ela ganha do rootfs do ALARM e NÃO passa pela verificação de assinatura;
+#   TERMUX_PROOT_NAME      nome do container local, o que você usa em "proot-distro login" (padrão: archlinuxarm em
+#                          aarch64; archlinux em x86_64).
 # O science-repo, o game-repo e o unstable-repo foram incorporados ao repositório principal do Termux
 # (wiki do termux-packages, página Mirrors), então não são mais necessários.
 # O tur-repo (Termux User Repository) NÃO é oficial: o Termux não dá suporte aos pacotes dele.
@@ -180,16 +181,26 @@ SKIP_TERMUX_REPOS="${SKIP_TERMUX_REPOS:-0}"
 TERMUX_REPOS=(x11-repo root-repo tur-repo)
 TERMUX_EXTRA_PACKAGES=(termux-services proot-distro iproute2 strace)
 SKIP_TERMUX_PROOT="${SKIP_TERMUX_PROOT:-0}"
-# A imagem do danhunsaker só existe para ARM; em x86_64 (ex.: Termux num emulador Android x86_64) o
-# proot-distro usa a imagem oficial archlinux (só amd64). Qualquer outra arquitetura segue com a de ARM.
-# shortcut: só x86_64 tem imagem própria; i686 e afins caem na de ARM e o install falha com aviso.
+# Distros do proot-distro: por enquanto só o Arch (outras opções de distro virão depois, escolhidas por você).
+#   aarch64 → Arch Linux ARM: o script baixa o rootfs OFICIAL do archlinuxarm.org por inteiro para uma pasta
+#             temporária, confere a assinatura PGP com a chave fixada abaixo e só então manda o proot-distro
+#             instalar o arquivo local. Sem assinatura válida, nada é instalado.
+#   x86_64  → Arch Linux: imagem oficial archlinux:latest (só amd64), instalada pelo proot-distro como sempre
+#             (ex.: Termux num emulador Android x86_64).
+# O ALARM não é mais instalado a partir da imagem de terceiros danhunsaker/archlinuxarm (sem suporte a ARM).
+# O http é o do site oficial: a integridade vem da assinatura PGP, não do transporte.
+ALARM_ROOTFS_URL="http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz"
+ALARM_KEY_FPR="68B3537F39A313B3E574D06777193F152BDBE6A6"   # Arch Linux ARM Build System (archlinuxarm.org/about/package-signing)
+ALARM_KEYSERVERS=(hkps://keyserver.ubuntu.com hkps://keys.openpgp.org)
+# shortcut: só aarch64 tem rootfs do ALARM aqui (armv7 existe no ALARM, mas não é tratado); outra CPU pula com aviso.
 case ${UNAME_M:-$(uname -m 2>/dev/null || true)} in
-  x86_64|amd64) _proot_img=archlinux:latest;                _proot_name=archlinux ;;
-  *)            _proot_img=danhunsaker/archlinuxarm:latest; _proot_name=archlinuxarm ;;
+  x86_64|amd64) _proot_img=archlinux:latest; _proot_name=archlinux ;;
+  *)            _proot_img="";               _proot_name=archlinuxarm ;;
 esac
 TERMUX_PROOT_IMAGE="${TERMUX_PROOT_IMAGE:-$_proot_img}"
 TERMUX_PROOT_NAME="${TERMUX_PROOT_NAME:-$_proot_name}"
 unset _proot_img _proot_name
+ALARM_TAR=""   # caminho do rootfs já verificado (preenchido por fetch_alarm_rootfs)
 
 # Estrutura do repo: cada ambiente tem a sua subpasta com os próprios dotfiles.
 DIR_TERMUX="Termux"
@@ -351,8 +362,9 @@ No fim o script pergunta se você quer encerrar a sessão (fecha o shell que cha
 Variáveis úteis: NEW_USER (padrão: gustavo), REPO_URL, REPO_DIR, DOTFILES_REF (branch/tag/commit dos dotfiles; padrão main), DOTFILES_CLONE=1,
                  FORCE_PROOT=1 (força o modo proot se a detecção falhar),
                  SKIP_TERMUX_PROOT=1 (Termux: não instala o Arch no proot-distro),
-                 TERMUX_PROOT_IMAGE (Termux: imagem do proot-distro; padrão danhunsaker/archlinuxarm:latest em ARM, archlinux:latest em x86_64),
-                 TERMUX_PROOT_NAME (Termux: nome do container; padrão archlinuxarm em ARM, archlinux em x86_64),
+                 TERMUX_PROOT_IMAGE (Termux: imagem OCI do proot-distro; padrão archlinux:latest em x86_64; em aarch64 fica vazio e o script
+                                     baixa o rootfs oficial do Arch Linux ARM e confere a assinatura PGP; se você definir, não há verificação),
+                 TERMUX_PROOT_NAME (Termux: nome do container; padrão archlinuxarm em aarch64, archlinux em x86_64),
                  SKIP_LOCALES=1 (não gera os locales nem escreve o locale.conf; desktop e WSL),
                  FORCE_WSL=1 (força o modo WSL) ou FORCE_WSL=0 (desliga a detecção de WSL),
                  WSL_SET_DEFAULT_USER=0 (no WSL, não define $NEW_USER como usuário padrão no wsl.conf),
@@ -792,28 +804,103 @@ termux_extra_packages() {
   return 0
 }
 
-# Instala o Arch no proot-distro: Arch Linux ARM em ARM, Arch oficial em x86_64 (o proot-distro vem em TERMUX_EXTRA_PACKAGES).
-# O proot-distro atual aceita uma referência de imagem OCI (usuário/imagem:tag) e --name para o nome local.
-# shortcut: "já instalado" = o nome aparece em "proot-distro list"; mude se o formato da listagem mudar.
+# Confere a assinatura PGP (arquivo .sig separado) do rootfs do ALARM. A única âncora de confiança é o fingerprint
+# fixado em ALARM_KEY_FPR: a chave vem de um keyserver, mas só vale se for exatamente essa, e a assinatura precisa
+# ser boa, de chave não expirada nem revogada, e feita por ela. Num chaveiro temporário, sem tocar no seu ~/.gnupg.
+# Devolve 1 em qualquer dúvida (sem gpg, sem a chave, assinatura que não bate).
+verify_alarm_rootfs() {  # arquivo.tar.gz arquivo.sig diretório-temporário
+  local tar=$1 sig=$2 gh=$3/gnupg ks st rc=1
+  mkdir -m 700 "$gh" || return 1
+  for ks in "${ALARM_KEYSERVERS[@]}"; do
+    gpg --homedir "$gh" --batch --quiet --keyserver "$ks" --recv-keys "$ALARM_KEY_FPR" >/dev/null 2>&1 && break
+  done
+  if gpg --homedir "$gh" --batch --list-keys "$ALARM_KEY_FPR" >/dev/null 2>&1; then
+    st=$(gpg --homedir "$gh" --batch --status-fd 1 --verify "$sig" "$tar" 2>/dev/null) || st=""
+    if grep -q '^\[GNUPG:\] GOODSIG ' <<<"$st" \
+       && ! grep -Eq '^\[GNUPG:\] (BADSIG|ERRSIG|EXPSIG|EXPKEYSIG|REVKEYSIG) ' <<<"$st" \
+       && awk -v f="$ALARM_KEY_FPR" '$2=="VALIDSIG" && ($3==f || $NF==f) {ok=1} END{exit !ok}' <<<"$st"; then
+      rc=0
+    fi
+  fi
+  gpgconf --homedir "$gh" --kill all >/dev/null 2>&1 || true   # o dirmngr/gpg-agent não ficam rodando
+  return $rc
+}
+
+# Baixa o rootfs OFICIAL do Arch Linux ARM (aarch64) e a assinatura para uma pasta temporária e confere a assinatura.
+# Deixa o caminho do arquivo verificado em ALARM_TAR; devolve 1 (e apaga o download) se algo falhar.
+# shortcut: o download recomeça do zero a cada execução (sem cache nem retomada); é um arquivo grande, use Wi-Fi.
+fetch_alarm_rootfs() {
+  local dir tar
+  if ! command -v gpg >/dev/null 2>&1; then
+    pm_install gnupg || { warn "não consegui instalar o gnupg, necessário para verificar a assinatura do rootfs"; return 1; }
+  fi
+  dir=$(mktemp -d); CLEANUP_DIRS+=("$dir")
+  tar=$dir/ArchLinuxARM-aarch64-latest.tar.gz
+  if ((DRY_RUN)); then
+    run curl -fL --retry 3 --connect-timeout 20 -o "$tar" "$ALARM_ROOTFS_URL"
+    run curl -fL --retry 3 --connect-timeout 20 -o "$tar.sig" "$ALARM_ROOTFS_URL.sig"
+    log "(conferiria a assinatura PGP com a chave $ALARM_KEY_FPR, buscada num keyserver; sem assinatura válida nada seria instalado)"
+    ALARM_TAR=$tar
+    return 0
+  fi
+  log "Baixando o rootfs oficial do Arch Linux ARM (arquivo grande; use Wi-Fi)..."
+  if ! curl -fL --retry 3 --connect-timeout 20 -o "$tar" "$ALARM_ROOTFS_URL" \
+     || ! curl -fL --retry 3 --connect-timeout 20 -o "$tar.sig" "$ALARM_ROOTFS_URL.sig"; then
+    warn "o download do rootfs ou da assinatura (.sig) falhou; nada foi instalado"
+    rm -rf -- "$dir"; return 1
+  fi
+  log "Conferindo a assinatura PGP do rootfs (chave $ALARM_KEY_FPR)..."
+  if ! verify_alarm_rootfs "$tar" "$tar.sig" "$dir"; then
+    warn "a assinatura do rootfs NÃO foi confirmada (sem a chave no keyserver, download corrompido ou arquivo adulterado); nada foi instalado. Tente de novo; se persistir, não instale esse arquivo"
+    rm -rf -- "$dir"; return 1
+  fi
+  log "Assinatura do rootfs confirmada"
+  ALARM_TAR=$tar
+}
+
+# Instala o Arch no proot-distro (o proot-distro vem em TERMUX_EXTRA_PACKAGES): imagem OCI se TERMUX_PROOT_IMAGE estiver
+# preenchida (padrão em x86_64) ou, em aarch64, o rootfs oficial do ALARM baixado e verificado antes.
+# O proot-distro atual instala por imagem OCI (usuário/imagem:tag) ou por caminho de arquivo local (que começa com /),
+# e aceita --name para o nome do container. Um tarball local não gera manifest.json: "proot-distro login" funciona,
+# "reset" e "run" não.
+# shortcut: "já instalado" = o nome aparece em "proot-distro list" ou existe a pasta do container; mude se o layout mudar.
 termux_proot_distro() {
   [[ $PM == pkg ]] || return 0
   if [[ $SKIP_TERMUX_PROOT == 1 ]]; then log "Termux: distro do proot-distro pulada (SKIP_TERMUX_PROOT=1)"; return 0; fi
+  local m=${UNAME_M:-$(uname -m 2>/dev/null || true)} src label
+  if [[ -n $TERMUX_PROOT_IMAGE ]]; then label=$TERMUX_PROOT_IMAGE
+  elif [[ $m == aarch64 || $m == arm64 ]]; then label="Arch Linux ARM (rootfs oficial)"
+  else
+    warn "proot-distro: sem distro para a arquitetura $m (só aarch64 tem o Arch Linux ARM e x86_64 o Arch); pulei"
+    return 0
+  fi
   if ((! DRY_RUN)); then
     if ! command -v proot-distro >/dev/null 2>&1; then
-      warn "proot-distro não está instalado; pulo a instalação de $TERMUX_PROOT_IMAGE"
+      warn "proot-distro não está instalado; pulo a instalação de $label"
       return 0
     fi
-    if proot-distro list 2>/dev/null | grep -qw -- "$TERMUX_PROOT_NAME"; then
+    if proot-distro list 2>/dev/null | grep -qw -- "$TERMUX_PROOT_NAME" \
+       || [[ -d ${PREFIX:-/data/data/com.termux/files/usr}/var/lib/proot-distro/containers/$TERMUX_PROOT_NAME ]]; then
       log "proot-distro: $TERMUX_PROOT_NAME já instalado"
       return 0
     fi
   fi
-  if run proot-distro install --name "$TERMUX_PROOT_NAME" "$TERMUX_PROOT_IMAGE"; then
-    log "proot-distro: $TERMUX_PROOT_IMAGE instalado como $TERMUX_PROOT_NAME; entre com: proot-distro login $TERMUX_PROOT_NAME"
+  if [[ -n $TERMUX_PROOT_IMAGE ]]; then
+    src=$TERMUX_PROOT_IMAGE
+  elif ! fetch_alarm_rootfs; then
+    FAILED+=("proot-distro:$label")
+    return 0
   else
-    warn "falhou: proot-distro install $TERMUX_PROOT_IMAGE (a imagem é baixada da internet; tente de novo)"
-    FAILED+=("proot-distro:$TERMUX_PROOT_IMAGE")
+    src=$ALARM_TAR
   fi
+  if run proot-distro install --name "$TERMUX_PROOT_NAME" "$src"; then
+    log "proot-distro: $label instalado como $TERMUX_PROOT_NAME; entre com: proot-distro login $TERMUX_PROOT_NAME"
+  else
+    warn "falhou: proot-distro install $label (tente de novo)"
+    FAILED+=("proot-distro:$label")
+  fi
+  # O rootfs baixado já está instalado; apaga o tarball agora para não ocupar o armazenamento do celular até o fim.
+  [[ -z $TERMUX_PROOT_IMAGE && -n $ALARM_TAR ]] && rm -rf -- "${ALARM_TAR%/*}"
   return 0
 }
 
@@ -2772,7 +2859,7 @@ main() {
     termux_repos             # x11-repo, root-repo, tur-repo
     install_packages
     termux_extra_packages    # termux-services, proot-distro
-    termux_proot_distro      # Arch Linux ARM (danhunsaker) ou Arch x86_64 (oficial) no proot-distro
+    termux_proot_distro      # aarch64: Arch Linux ARM (rootfs oficial, assinatura verificada); x86_64: Arch (imagem oficial)
     run_user_steps
     echo
     print_failed
