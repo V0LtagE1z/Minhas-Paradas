@@ -27,9 +27,13 @@ Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep 
 
 - **Outras opções de distro no proot virão depois**, escolhidas pelo autor. Por enquanto só o Arch Linux ARM (aarch64) e o Arch Linux (x86_64).
 
+#### Testado
+
+- **No Termux real, pelo autor (22/nov/2026):** a instalação do Arch Linux ARM pelo rootfs oficial funcionou perfeitamente (baixou, conferiu a assinatura e instalou). Isso também confirma que o `.sig` do `ArchLinuxARM-aarch64-latest.tar.gz` existe no servidor e que o `proot-distro install <arquivo local>` extrai o rootfs. O autor não detalhou aparelho nem versão do Termux.
+
 #### Não testado
 
-- **Nada num Termux real e nada baixado do servidor de verdade.** Não consegui confirmar de fora que o `.sig` do `ArchLinuxARM-aarch64-latest.tar.gz` existe em `os.archlinuxarm.org` (o ambiente não alcança o site); se não existir, o script se recusa a instalar. Também não confirmei que o `proot-distro install <arquivo local>` extrai o rootfs do ALARM sem problemas, nem que `proot-distro login` funciona depois (um tarball local não gera `manifest.json`: `reset` e `run` não funcionam). Os testes usam um `curl` e um `proot-distro` de mentira.
+- Os testes automáticos usam um `curl` e um `proot-distro` de mentira; o download e a assinatura reais só foram exercitados no teste do autor acima. Um tarball local não gera `manifest.json` no `proot-distro`: `reset` e `run` não funcionam (`proot-distro login` funciona). x86_64 e a falha de keyserver/`.sig` não foram repetidos num Termux real.
 - Os testes `tests/menu.test.sh` e `tests/caelestia.test.sh` já falhavam na `main` limpa neste ambiente de verificação (confirmado rodando-os na `main`); não têm relação com esta mudança.
 
 ## Não lançado (branch `menu-submenus`, a partir da `main`)
