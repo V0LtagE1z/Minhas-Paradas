@@ -170,7 +170,8 @@ DESKTOP_PACKAGES=(kitty fontconfig)
 #                          x86_64; vazio em aarch64, onde vale o rootfs oficial do Arch Linux ARM, verificado). Se você
 #                          definir, ela ganha do rootfs do ALARM e NÃO passa pela verificação de assinatura;
 #   TERMUX_PROOT_NAME      nome do container local, o que você usa em "proot-distro login" (padrão: archlinuxarm em
-#                          aarch64; archlinux em x86_64).
+#                          aarch64; archlinux em x86_64);
+#   SKIP_ALARM_MIRRORS=1   baixa o rootfs do Arch Linux ARM só do servidor oficial, sem medir os mirrors.
 # O science-repo, o game-repo e o unstable-repo foram incorporados ao repositório principal do Termux
 # (wiki do termux-packages, página Mirrors), então não são mais necessários.
 # O tur-repo (Termux User Repository) NÃO é oficial: o Termux não dá suporte aos pacotes dele.
@@ -192,6 +193,12 @@ SKIP_TERMUX_PROOT="${SKIP_TERMUX_PROOT:-0}"
 ALARM_ROOTFS_URL="http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz"
 ALARM_KEY_FPR="68B3537F39A313B3E574D06777193F152BDBE6A6"   # Arch Linux ARM Build System (archlinuxarm.org/about/package-signing)
 ALARM_KEYSERVERS=(hkps://keyserver.ubuntu.com hkps://keys.openpgp.org)
+# Mirrors do ALARM (o pacman-mirrorlist oficial, de 11/abr/2026; não há mirror na América do Sul). O rootfs fica em
+# <mirror>/os/<arquivo>, mas a lista deles é de pacotes e nem todo mirror hospeda /os/: cada um é sondado na hora e os que
+# não têm o arquivo saem. O servidor oficial (ALARM_ROOTFS_URL) é sempre o último da fila, a reserva.
+# Troca só a velocidade: a assinatura PGP abaixo vale para o arquivo de qualquer origem.
+SKIP_ALARM_MIRRORS="${SKIP_ALARM_MIRRORS:-0}"
+ALARM_MIRRORS=(http://dk.mirror.archlinuxarm.org http://fr.mirror.archlinuxarm.org http://de3.mirror.archlinuxarm.org http://de.mirror.archlinuxarm.org http://de4.mirror.archlinuxarm.org http://gr.mirror.archlinuxarm.org http://hu.mirror.archlinuxarm.org http://tw2.mirror.archlinuxarm.org http://tw.mirror.archlinuxarm.org http://ca.us.mirror.archlinuxarm.org http://fl.us.mirror.archlinuxarm.org http://nj.us.mirror.archlinuxarm.org)
 # shortcut: só aarch64 tem rootfs do ALARM aqui (armv7 existe no ALARM, mas não é tratado); outra CPU pula com aviso.
 case ${UNAME_M:-$(uname -m 2>/dev/null || true)} in
   x86_64|amd64) _proot_img=archlinux:latest; _proot_name=archlinux ;;
@@ -365,6 +372,7 @@ Variáveis úteis: NEW_USER (padrão: gustavo), REPO_URL, REPO_DIR, DOTFILES_REF
                  TERMUX_PROOT_IMAGE (Termux: imagem OCI do proot-distro; padrão archlinux:latest em x86_64; em aarch64 fica vazio e o script
                                      baixa o rootfs oficial do Arch Linux ARM e confere a assinatura PGP; se você definir, não há verificação),
                  TERMUX_PROOT_NAME (Termux: nome do container; padrão archlinuxarm em aarch64, archlinux em x86_64),
+                 SKIP_ALARM_MIRRORS=1 (Termux aarch64: baixa o rootfs só do servidor oficial, sem medir os mirrors do Arch Linux ARM),
                  SKIP_LOCALES=1 (não gera os locales nem escreve o locale.conf; desktop e WSL),
                  FORCE_WSL=1 (força o modo WSL) ou FORCE_WSL=0 (desliga a detecção de WSL),
                  WSL_SET_DEFAULT_USER=0 (no WSL, não define $NEW_USER como usuário padrão no wsl.conf),
@@ -826,36 +834,78 @@ verify_alarm_rootfs() {  # arquivo.tar.gz arquivo.sig diretório-temporário
   return $rc
 }
 
-# Baixa o rootfs OFICIAL do Arch Linux ARM (aarch64) e a assinatura para uma pasta temporária e confere a assinatura.
-# Deixa o caminho do arquivo verificado em ALARM_TAR; devolve 1 (e apaga o download) se algo falhar.
+# Sonda cada mirror em paralelo com um pedido de 64 KB do arquivo (só passa quem responde 206: tem o arquivo e aceita
+# Range; --max-filesize derruba na hora um servidor que ignora o Range e mandaria o arquivo inteiro) e imprime as bases
+# que passaram, da mais rápida para a mais lenta. Até 5 s no total, mesmo com mirror fora do ar.
+# shortcut: mede latência + 64 KB, não a banda sustentada; um mirror perto e lento pode passar na frente.
+rank_mirrors() {  # caminho-do-arquivo base...
+  local file=$1 tmp i=0 b; shift
+  tmp=$(mktemp -d)
+  for b; do
+    i=$((i + 1))
+    ( o=$(curl -fsS -o /dev/null -r 0-65535 --max-filesize 1048576 --connect-timeout 3 -m 5 -w '%{http_code} %{time_total}' "$b/$file" 2>/dev/null) \
+        && [[ $o == "206 "* ]] && printf '%s %s\n' "${o#206 }" "$b" > "$tmp/$i" ) &
+  done
+  wait
+  # LC_ALL=C: com locale pt_BR o sort -n lê "0.123" com vírgula decimal e ordena errado.
+  cat "$tmp"/* 2>/dev/null | LC_ALL=C sort -n | awk '{print $2}' || true
+  rm -rf "$tmp"
+  return 0
+}
+
+# Baixa o rootfs do Arch Linux ARM (aarch64) e a assinatura para uma pasta temporária e confere a assinatura.
+# Tenta, nesta ordem, os mirrors que responderam (o mais rápido primeiro) e por último o servidor oficial; o arquivo e o
+# .sig vêm sempre da MESMA origem (um mirror atrasado teria um .sig de outra versão). Mirror que falha no download ou
+# cuja assinatura não confere é descartado e vale o próximo; só a falha do oficial encerra sem instalar.
+# Deixa o caminho do arquivo verificado em ALARM_TAR; devolve 1 (e apaga o download) se nada der certo.
 # shortcut: o download recomeça do zero a cada execução (sem cache nem retomada); é um arquivo grande, use Wi-Fi.
+# shortcut: um mirror atrasado pode servir um rootfs antigo, porém com assinatura válida; o -Syu do proot atualiza depois.
 fetch_alarm_rootfs() {
-  local dir tar
+  local dir tar url src m i n last file=${ALARM_ROOTFS_URL##*/os/}
+  local -a urls=()
   if ! command -v gpg >/dev/null 2>&1; then
     pm_install gnupg || { warn "não consegui instalar o gnupg, necessário para verificar a assinatura do rootfs"; return 1; }
   fi
-  dir=$(mktemp -d); CLEANUP_DIRS+=("$dir")
-  tar=$dir/ArchLinuxARM-aarch64-latest.tar.gz
   if ((DRY_RUN)); then
+    dir=$(mktemp -d); CLEANUP_DIRS+=("$dir"); tar=$dir/$file
+    [[ $SKIP_ALARM_MIRRORS == 1 ]] || log "(mediria os mirrors do Arch Linux ARM e baixaria do mais rápido que tiver o rootfs, com o servidor oficial de reserva)"
     run curl -fL --retry 3 --connect-timeout 20 -o "$tar" "$ALARM_ROOTFS_URL"
     run curl -fL --retry 3 --connect-timeout 20 -o "$tar.sig" "$ALARM_ROOTFS_URL.sig"
     log "(conferiria a assinatura PGP com a chave $ALARM_KEY_FPR, buscada num keyserver; sem assinatura válida nada seria instalado)"
     ALARM_TAR=$tar
     return 0
   fi
-  log "Baixando o rootfs oficial do Arch Linux ARM (arquivo grande; use Wi-Fi)..."
-  if ! curl -fL --retry 3 --connect-timeout 20 -o "$tar" "$ALARM_ROOTFS_URL" \
-     || ! curl -fL --retry 3 --connect-timeout 20 -o "$tar.sig" "$ALARM_ROOTFS_URL.sig"; then
-    warn "o download do rootfs ou da assinatura (.sig) falhou; nada foi instalado"
-    rm -rf -- "$dir"; return 1
+  if [[ $SKIP_ALARM_MIRRORS != 1 ]]; then
+    log "Medindo os mirrors do Arch Linux ARM (até 5 s)..."
+    while IFS= read -r m; do
+      [[ -n $m ]] && urls+=("$m/os/$file")
+    done < <(rank_mirrors "os/$file" "${ALARM_MIRRORS[@]}")
+    if ((${#urls[@]})); then log "mirrors com o rootfs: ${#urls[@]}; o mais rápido: ${urls[0]%%/os/*}"
+    else log "nenhum mirror tem o rootfs; uso o servidor oficial"; fi
   fi
-  log "Conferindo a assinatura PGP do rootfs (chave $ALARM_KEY_FPR)..."
-  if ! verify_alarm_rootfs "$tar" "$tar.sig" "$dir"; then
-    warn "a assinatura do rootfs NÃO foi confirmada (sem a chave no keyserver, download corrompido ou arquivo adulterado); nada foi instalado. Tente de novo; se persistir, não instale esse arquivo"
-    rm -rf -- "$dir"; return 1
-  fi
-  log "Assinatura do rootfs confirmada"
-  ALARM_TAR=$tar
+  urls+=("$ALARM_ROOTFS_URL")
+  log "Baixando o rootfs do Arch Linux ARM (arquivo grande; use Wi-Fi)..."
+  n=${#urls[@]}
+  for ((i = 0; i < n; i++)); do
+    url=${urls[i]}; src=${url%%/os/*}; last=$((i == n - 1))
+    dir=$(mktemp -d); CLEANUP_DIRS+=("$dir"); tar=$dir/$file
+    if ! curl -fL --retry 3 --connect-timeout 20 -o "$tar" "$url" \
+       || ! curl -fL --retry 3 --connect-timeout 20 -o "$tar.sig" "$url.sig"; then
+      if ((last)); then warn "o download do rootfs ou da assinatura (.sig) falhou; nada foi instalado"
+      else warn "o download de $src falhou; tento o próximo"; fi
+    else
+      log "Conferindo a assinatura PGP do rootfs (chave $ALARM_KEY_FPR)..."
+      if verify_alarm_rootfs "$tar" "$tar.sig" "$dir"; then
+        log "Assinatura do rootfs confirmada ($src)"
+        ALARM_TAR=$tar
+        return 0
+      fi
+      if ((last)); then warn "a assinatura do rootfs NÃO foi confirmada (sem a chave no keyserver, download corrompido ou arquivo adulterado); nada foi instalado. Tente de novo; se persistir, não instale esse arquivo"
+      else warn "a assinatura do rootfs de $src NÃO foi confirmada; tento o próximo"; fi
+    fi
+    rm -rf -- "$dir"
+  done
+  return 1
 }
 
 # Instala o Arch no proot-distro (o proot-distro vem em TERMUX_EXTRA_PACKAGES): imagem OCI se TERMUX_PROOT_IMAGE estiver

@@ -2,6 +2,26 @@
 
 Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto não usa versões, então as entradas são por data.
 
+## Não lançado (branch `alarm-rootfs-mirrors`, a partir da `main`)
+
+### 2026-11-23
+
+#### Adicionado
+
+- **`setup.sh` (Termux, aarch64): o rootfs do Arch Linux ARM é baixado do mirror mais rápido, com o servidor oficial de reserva.** Antes ia sempre para `os.archlinuxarm.org`. Agora `rank_mirrors` sonda em paralelo (até 5 s) os 12 mirrors do `pacman-mirrorlist` oficial (lista de 11/abr/2026; nenhum na América do Sul) pedindo 64 KB do arquivo; só entra na fila quem responde `206`, ordenado pelo tempo. `fetch_alarm_rootfs` tenta um por um, e `os.archlinuxarm.org` é sempre o último.
+- O arquivo e o `.sig` vêm da mesma origem. Mirror que falha no download ou cuja assinatura PGP não confere é descartado e vale o próximo; só a falha do oficial encerra sem instalar. **A verificação não mudou** (mesma chave fixada, mesmo critério), então o mirror muda a velocidade, não a segurança.
+- `SKIP_ALARM_MIRRORS=1` baixa só do oficial. `--dry-run` só avisa que mediria os mirrors (não usa a rede).
+- **`tests/alarm-rootfs.test.sh`:** novos casos (mirror mais rápido primeiro e oficial não usado, nenhum mirror com o rootfs, download do mirror que falha, mirror que entrega arquivo adulterado, adulterado em todas as origens, `SKIP_ALARM_MIRRORS=1`). Conferido por mutação: o teste falha se a ordem for invertida, se o oficial deixar de ser a reserva ou se a assinatura do mirror não for conferida.
+
+#### Não testado
+
+- **Não consegui confirmar que algum mirror hospeda `/os/`.** A lista que o ALARM publica é de pacotes (`/$arch/$repo`); o `/os/` só foi confirmado em `os.archlinuxarm.org`. Se nenhum mirror tiver o rootfs, o script usa o oficial e o ganho é zero (sem prejuízo, só 5 s de sondagem). Os endereços dos mirrors e o `Range` não foram exercitados contra os servidores reais (o ambiente de verificação não tem rede para eles); os testes usam `curl` de mentira.
+- **Limites conhecidos (`shortcut:` no código):** a medição é de latência + 64 KB, não de banda; um mirror atrasado pode servir um rootfs antigo (porém com assinatura válida).
+
+#### Planejado
+
+- Mirrors de outras distros do `proot-distro`, quando elas forem adicionadas; `rank_mirrors` já é genérico (recebe o caminho do arquivo e as bases), mas cada distro precisará da sua lista e da sua verificação.
+
 ## Não lançado (branch `termux-alarm-rootfs-oficial`, a partir da `main`)
 
 ### 2026-11-22
