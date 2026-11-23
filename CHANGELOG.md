@@ -2,6 +2,22 @@
 
 Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto não usa versões, então as entradas são por data.
 
+## Não lançado (branch `alarm-rootfs-rate-mirrors`, a partir da `alarm-rootfs-mirrors`)
+
+### 2026-11-23
+
+#### Adicionado
+
+- **`setup.sh` (Termux, aarch64): a ordem dos mirrors do rootfs do Arch Linux ARM vem do `rate-mirrors`.** `alarm_rate_order` baixa o binário da release (o mesmo `download_rate_mirrors`, com sha256 conferido), roda `rate_mirrors --save=<arquivo> archarm` (até 150 s, 1-2 min na prática) e lê os hosts da mirrorlist gerada. A sondagem do `rank_mirrors` continua como **filtro**: só entra quem responde `206` para o `/os/<rootfs>`, porque o rate-mirrors mede arquivos de pacote, não o rootfs. Entre os aprovados, vale a ordem do rate-mirrors; os demais seguem pela latência; o servidor oficial é sempre o último.
+- Mirrors que o rate-mirrors conhece e a lista fixa não entram na sondagem.
+- **Cai sozinho para a sondagem de latência** se o rate-mirrors não baixar, não rodar, estourar o tempo ou não gerar lista (o script avisa). `SKIP_ALARM_RATE_MIRRORS=1` não o usa. A verificação PGP não mudou.
+- **`tests/alarm-rootfs.test.sh`:** 6 casos novos com um `rate_mirrors` de mentira (a ordem dele manda; mirror dele sem o rootfs é pulado; mirror novo dele é sondado e usado; binário que não baixa; rate-mirrors que falha; `SKIP_ALARM_RATE_MIRRORS=1`). Conferido por mutação: o teste falha se a ordem do rate-mirrors for ignorada, se o filtro de quem tem o rootfs sumir, se os mirrors novos não entrarem na sondagem ou se o `SKIP_ALARM_RATE_MIRRORS` for ignorado.
+
+#### Não testado
+
+- **O binário do rate-mirrors no Termux nativo.** Ele é estático (musl) e hoje só roda dentro do proot; no Termux o DNS do musl pode falhar (o Android não tem `/etc/resolv.conf`). Se falhar, o script usa só a sondagem. Só o teste no celular confirma. Também não li o código do subcomando `archarm` (a forma da lista que ele gera foi tirada do uso já existente no script).
+- **Custo:** o rate-mirrors soma 1-2 min antes do download; numa conexão rápida isso pode custar mais do que a diferença entre mirrors. `SKIP_ALARM_RATE_MIRRORS=1` desliga.
+
 ## Não lançado (branch `alarm-rootfs-mirrors`, a partir da `main`)
 
 ### 2026-11-23

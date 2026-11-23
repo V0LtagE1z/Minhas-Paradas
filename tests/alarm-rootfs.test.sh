@@ -4,8 +4,8 @@
 # temporário); só o keyserver, o curl e o proot-distro são de mentira. Confere que o rootfs do Arch Linux ARM só é
 # instalado com assinatura PGP válida da chave fixada: arquivo adulterado, assinatura de outra chave, chave expirada,
 # .sig ausente e keyserver fora do ar devem recusar a instalação. Confere também a escolha de mirrors (o mais rápido
-# primeiro, o oficial sempre de reserva, mirror que falha ou serve arquivo adulterado é descartado). Não usa a rede nem
-# instala nada.
+# primeiro, o oficial sempre de reserva, mirror que falha ou serve arquivo adulterado é descartado) e a ordem do
+# rate-mirrors (de mentira) sobre os mirrors que têm o rootfs. Não usa a rede nem instala nada.
 # Uso: bash tests/alarm-rootfs.test.sh
 set -u
 here=$(dirname "$(readlink -f -- "${BASH_SOURCE[0]}")")
@@ -88,6 +88,14 @@ case $1 in
            exit "${FAKE_INSTALL_RC:-0}" ;;
 esac
 EOF
+# rate_mirrors: grava em --save=ARQ uma mirrorlist com os hosts de $FAKE_RATE_ORDER, nessa ordem; FAKE_RATE_RC é o código de saída.
+cat > "$tmp/bin/rate_mirrors" <<'EOF'
+#!/bin/bash
+for a in "$@"; do case $a in --save=*) save=${a#--save=} ;; esac; done
+echo "rate-mirrors $*" >> "$FAKE_LOG"
+for h in ${FAKE_RATE_ORDER:-}; do echo "Server = http://$h/\$arch/\$repo" >> "$save"; done
+exit "${FAKE_RATE_RC:-0}"
+EOF
 printf '#!/bin/sh\necho "pkg $*" >> "$FAKE_LOG"\n' > "$tmp/bin/pkg"
 chmod +x "$tmp/bin/"*
 
@@ -97,12 +105,14 @@ fn() {  # imprime a função $1 do setup.sh (uma linha, ou até o "}" na coluna 
 }
 {
   echo 'set -euo pipefail'
-  echo 'DRY_RUN=${DRY_RUN:-0}; PM=pkg; SKIP_TERMUX_PROOT=${SKIP_TERMUX_PROOT:-0}; CLEANUP_DIRS=(); FAILED=()'
+  echo 'DRY_RUN=${DRY_RUN:-0}; PM=pkg; SKIP_TERMUX_PROOT=${SKIP_TERMUX_PROOT:-0}; CLEANUP_DIRS=(); CLEANUP_FILES=(); FAILED=()'
+  # download_rate_mirrors de mentira (o verdadeiro baixa um binário): aponta RATE_MIRRORS para o rate_mirrors falso
+  echo 'download_rate_mirrors() { [[ -z ${FAKE_RATE_FAIL:-} ]] || return 1; RATE_MIRRORS=$FAKE_RATE_BIN; }'
   # as variáveis de configuração do ALARM, como estão no script (menos o fingerprint, que o teste troca)
-  grep -E '^(ALARM_ROOTFS_URL|ALARM_KEYSERVERS|ALARM_MIRRORS|SKIP_ALARM_MIRRORS|ALARM_TAR)=' "$repo/setup.sh"
+  grep -E '^(ALARM_ROOTFS_URL|ALARM_KEYSERVERS|ALARM_MIRRORS|SKIP_ALARM_MIRRORS|SKIP_ALARM_RATE_MIRRORS|ALARM_TAR)=' "$repo/setup.sh"
   echo 'ALARM_KEY_FPR=$TEST_FPR'
   awk '/^case \$\{UNAME_M:-/,/^unset _proot_img/' "$repo/setup.sh"
-  for f in log warn run pm_install verify_alarm_rootfs rank_mirrors fetch_alarm_rootfs termux_proot_distro; do fn "$f"; done
+  for f in log warn run pm_install verify_alarm_rootfs rank_mirrors alarm_rate_order fetch_alarm_rootfs termux_proot_distro; do fn "$f"; done
 } > "$tmp/funcs.sh"
 bash -n "$tmp/funcs.sh" || { echo "FALHOU: as funções extraídas não passam no bash -n"; exit 1; }
 grep -q 'termux_proot_distro()' "$tmp/funcs.sh" && grep -q 'verify_alarm_rootfs()' "$tmp/funcs.sh" || { echo "FALHOU: extração incompleta"; exit 1; }
@@ -112,7 +122,7 @@ fail=0
 t() {
   local -a envs=(); while [[ ${1:-} != -- && $# -gt 0 ]]; do envs+=("$1"); shift; done; shift
   : > "$tmp/log"; rm -rf "$tmp/tmpdir"; mkdir "$tmp/tmpdir"
-  out=$(env PATH="$tmp/bin:$PATH" TMPDIR="$tmp/tmpdir" PREFIX="$tmp/prefix" FAKE_LOG="$tmp/log" FAKE_TAR="$tmp/fx/$tarname" FAKE_TAMPERED="$tmp/fx/tampered.tar.gz" \
+  out=$(env PATH="$tmp/bin:$PATH" TMPDIR="$tmp/tmpdir" PREFIX="$tmp/prefix" FAKE_LOG="$tmp/log" FAKE_TAR="$tmp/fx/$tarname" FAKE_TAMPERED="$tmp/fx/tampered.tar.gz" FAKE_RATE_BIN="$tmp/bin/rate_mirrors" \
         FAKE_SIG="$tmp/fx/ok.sig" FAKE_KEYFILE="$tmp/fx/oficial.asc" TEST_FPR="$FPR_OK" UNAME_M=aarch64 "${envs[@]}" \
         bash -c 'source "$0"; termux_proot_distro; echo "FAILED=(${FAILED[*]:-})"' "$tmp/funcs.sh" 2>&1 </dev/null | sed 's/\x1b\[[0-9;]*m//g')
   log=$(cat "$tmp/log")
@@ -172,7 +182,7 @@ t SKIP_TERMUX_PROOT=1 --; has 'pulada (SKIP_TERMUX_PROOT=1)' "$out"; [[ -z $log 
 
 # 13) --dry-run: mostra os comandos, não baixa, não confere e não instala nada.
 t DRY_RUN=1 --; has '[dry] curl -fL --retry 3' "$out"; has '[dry] proot-distro install --name archlinuxarm' "$out"
-has 'conferiria a assinatura PGP' "$out"; has 'mediria os mirrors do Arch Linux ARM' "$out"; [[ -z $log ]] || { echo "FALHOU: o dry-run executou algo: $log"; fail=1; }
+has 'conferiria a assinatura PGP' "$out"; has 'ranquearia os mirrors com o rate-mirrors' "$out"; [[ -z $log ]] || { echo "FALHOU: o dry-run executou algo: $log"; fail=1; }
 
 # 14) install falhando: avisa, registra e apaga o download.
 t FAKE_INSTALL_RC=1 --; has 'falhou: proot-distro install' "$out"; has 'FAILED=(proot-distro:' "$out"; leftover || { echo "FALHOU: o download ficou no disco"; fail=1; }
@@ -213,7 +223,40 @@ leftover || { echo "FALHOU: os downloads rejeitados ficaram no disco"; fail=1; }
 t SKIP_ALARM_MIRRORS=1 FAKE_PROBE="de.mirror:0.10" --
 hasnt 'probe' "$log"; hasnt 'de.mirror' "$log"; has "curl http://os.archlinuxarm.org/os/$tarname" "$log"; installed || { echo "FALHOU: não instalou"; fail=1; }
 
-# 21) Sem referência ao danhunsaker no código (só em comentários explicando a remoção).
+# 21) rate-mirrors: a ordem dele manda entre quem tem o rootfs (aqui fl.us antes de dk, embora o dk seja mais rápido na sondagem).
+t FAKE_PROBE="fl.us:0.30 de.mirror:0.10 dk:0.20" FAKE_RATE_ORDER="fl.us.mirror.archlinuxarm.org dk.mirror.archlinuxarm.org" --
+has 'rate-mirrors --save=' "$log"; has 'archarm' "$log"; has '(ordem do rate-mirrors)' "$out"
+[[ $(first_curl) == "curl http://fl.us.mirror.archlinuxarm.org/os/$tarname" ]] || { echo "FALHOU: o primeiro download não seguiu a ordem do rate-mirrors: $(first_curl)"; fail=1; }
+leftover || { echo "FALHOU: o download não foi apagado"; fail=1; }
+
+# 22) Mirror bem colocado no rate-mirrors mas sem o rootfs (a sondagem não o aprova) é pulado: o primeiro é o seguinte da ordem dele.
+t FAKE_PROBE="fl.us:0.30 de.mirror:0.10" FAKE_RATE_ORDER="ca.us.mirror.archlinuxarm.org fl.us.mirror.archlinuxarm.org" --
+[[ $(first_curl) == "curl http://fl.us.mirror.archlinuxarm.org/os/$tarname" ]] || { echo "FALHOU: não pulou o mirror sem o rootfs: $(first_curl)"; fail=1; }
+hasnt 'curl http://ca.us' "$log"; has 'mirrors com o rootfs: 2' "$out"
+
+# 23) Mirror que o rate-mirrors conhece e a lista fixa não: entra na sondagem e, tendo o rootfs, é usado.
+t FAKE_PROBE="novo.mirror:0.50 de.mirror:0.10" FAKE_RATE_ORDER="novo.mirror.archlinuxarm.org" --
+has 'probe http://novo.mirror.archlinuxarm.org/os/' "$log"
+[[ $(first_curl) == "curl http://novo.mirror.archlinuxarm.org/os/$tarname" ]] || { echo "FALHOU: não usou o mirror novo do rate-mirrors: $(first_curl)"; fail=1; }
+
+# 24) O rate-mirrors não baixa (sem binário/rede): segue só com a sondagem, o mais rápido em latência primeiro, e instala.
+t FAKE_RATE_FAIL=1 FAKE_PROBE="fl.us:0.30 de.mirror:0.10" FAKE_RATE_ORDER="fl.us.mirror.archlinuxarm.org" --
+hasnt 'rate-mirrors --save' "$log"; hasnt '(ordem do rate-mirrors)' "$out"
+[[ $(first_curl) == "curl http://de.mirror.archlinuxarm.org/os/$tarname" ]] || { echo "FALHOU: sem rate-mirrors devia valer a latência: $(first_curl)"; fail=1; }
+installed || { echo "FALHOU: não instalou"; fail=1; }
+
+# 25) O rate-mirrors roda mas falha (saída 1, sem lista): avisa e segue pela sondagem.
+t FAKE_RATE_RC=1 FAKE_PROBE="fl.us:0.30 de.mirror:0.10" --
+has 'o rate-mirrors não deu resultado' "$out"
+[[ $(first_curl) == "curl http://de.mirror.archlinuxarm.org/os/$tarname" ]] || { echo "FALHOU: rate-mirrors sem lista devia cair na latência: $(first_curl)"; fail=1; }
+installed || { echo "FALHOU: não instalou"; fail=1; }
+
+# 26) SKIP_ALARM_RATE_MIRRORS=1: o rate-mirrors nem é chamado; a sondagem continua.
+t SKIP_ALARM_RATE_MIRRORS=1 FAKE_PROBE="fl.us:0.30 de.mirror:0.10" FAKE_RATE_ORDER="fl.us.mirror.archlinuxarm.org" --
+hasnt 'rate-mirrors' "$log"; has 'probe http://de.mirror' "$log"
+[[ $(first_curl) == "curl http://de.mirror.archlinuxarm.org/os/$tarname" ]] || { echo "FALHOU: SKIP_ALARM_RATE_MIRRORS=1 devia usar a latência: $(first_curl)"; fail=1; }
+
+# 27) Sem referência ao danhunsaker no código (só em comentários explicando a remoção).
 if grep -nE 'danhunsaker' "$repo/setup.sh" | grep -vE '^[0-9]+:[[:space:]]*#'; then echo "FALHOU: o setup.sh ainda usa o danhunsaker fora de comentários"; fail=1; fi
 
 ((fail)) && { echo "FALHARAM testes"; exit 1; }
