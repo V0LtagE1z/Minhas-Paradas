@@ -86,12 +86,13 @@ mkpath() {  # nome comando... — cria uma pasta só com esses comandos de menti
   echo "$d:$tmp/tools"
 }
 
+bn=backup_ssd_$(date +%Y%m%d)   # o nome padrão do backup leva a data de hoje
 fail=0 out="" rc=0
 bd() {  # "entrada" [VAR=valor ...] -- argumentos — roda o script com a entrada digitada; saída em $out, status em $rc; chamadas em $tmp/calls.log
   local in=$1; shift; local -a envs=()
   while [[ ${1:-} != -- ]]; do envs+=("$1"); shift; done; shift
   : > "$FAKE_LOG"
-  out=$(printf '%b' "$in" | env PATH="${BD_PATH:-$tmp/fake:$PATH}" BACKUP_MNT="$tmp/mnt" "${envs[@]}" bash "$here/../backup-disco.sh" "$@" 2>&1); rc=$?
+  out=$(printf '%b' "$in" | env LC_ALL=C PATH="${BD_PATH:-$tmp/fake:$PATH}" BACKUP_MNT="$tmp/mnt" "${envs[@]}" bash "$here/../backup-disco.sh" "$@" 2>&1); rc=$?
 }
 has()    { grep -qF -- "$1" <<<"$out" || { echo "FALHOU: faltou \"$1\" na saída"; fail=1; }; }
 hasnt()  { ! grep -qF -- "$1" <<<"$out" || { echo "FALHOU: não devia ter \"$1\" na saída"; fail=1; }; }
@@ -113,11 +114,11 @@ fresh; bd '1\n1\n\ns\n' -- backup; rcis 0
 has 'Samsung SSD 860'; has 'serial S1'; has 'WD Elements'; hasnt 'loop0'; hasnt 'zram0'                       # discos listados com modelo e serial; loop não é disco
 has 'sdc1'; hasnt 'sda1'; has 'Ventoy dados'                                                    # partições do próprio disco de origem não são oferecidas
 called "mount /dev/sdc1 $tmp/mnt"
-called "ddrescue -v /dev/sda $dir/backup_ssd.img $dir/backup_ssd.log"
-called "zstd -T0 -19 --rm $dir/backup_ssd.img -o $dir/backup_ssd.img.zst"
-called "zstd -t $dir/backup_ssd.img.zst"; called "umount $tmp/mnt"
+called "ddrescue -v /dev/sda $dir/$bn.img $dir/$bn.log"
+called "zstd -T0 -19 --rm $dir/$bn.img -o $dir/$bn.img.zst"
+called "zstd -t $dir/$bn.img.zst"; called "umount $tmp/mnt"
 before 'ddrescue' 'zstd -T0'; before 'zstd -T0' 'zstd -t'; before 'zstd -t' 'umount'          # a ordem do guia: backup, comprimir, testar, desmontar
-[[ -f $dir/backup_ssd.img.zst && ! -e $dir/backup_ssd.img ]] || { echo "FALHOU: devia sobrar só o .zst"; fail=1; }
+[[ -f $dir/$bn.img.zst && ! -e $dir/$bn.img ]] || { echo "FALHOU: devia sobrar só o .zst"; fail=1; }
 # nível e sem compressão
 fresh; bd '1\n1\nmeu\ns\n' -- backup --nivel=12;  rcis 0; called "zstd -T0 -12 --rm $dir/meu.img -o $dir/meu.img.zst"
 fresh; bd '1\n1\nmeu\ns\n' -- backup --sem-compressao; rcis 0; never zstd; [[ -f $dir/meu.img ]] || { echo "FALHOU: --sem-compressao devia deixar o .img"; fail=1; }
@@ -130,31 +131,34 @@ fresh; bd '1\n' FAKE_SWAP=1 -- backup;        rcis 1; has 'montada ou swap'; nev
 fresh; bd '1\n2\n' -- backup;                 rcis 1; has 'FAT32'; never ddrescue                            # FAT32 não guarda arquivo grande
 fresh; bd 'q\n' -- backup;                    rcis 1; has 'cancelado'
 fresh; bd '9\n1\n1\n\n\n' -- backup;          has 'Digite um número de 1 a'                                  # número fora da lista pergunta de novo
+fresh; bd '09\n1\n1\n\ns\n' -- backup; hasnt 'too great'; has 'Digite um número de 1 a'; rcis 0       # "09" não é octal inválido: só fora da lista (dá um erro do bash se faltar o 10#)
+fresh; bd '1\n1\n\ns\n' -- backup; has "[$bn]"                                                              # o nome padrão leva a data
+fresh; bd '1\n1\n\ns\n' FAKE_DDRESCUE_FAIL=1 -- backup; has "digite o mesmo nome ($bn)"                   # e a mensagem de retomada diz qual nome digitar
 fresh; bd '1\n1\n../x\n' -- backup;           rcis 1; has 'nome inválido'; never ddrescue
 fresh; bd '1\n1\n\ns\n' FAKE_SDA_SIZE=99999999999999 -- backup; rcis 1; has 'faltam'; never ddrescue     # destino sem espaço
 fresh; bd '1\n1\n\ns\n' FAKE_DDRESCUE_FAIL=1 -- backup; rcis 1; has 'continua de onde parou'; never 'zstd -T0'; called "umount $tmp/mnt"   # falhou: o HD não pode ficar montado
-fresh; bd '1\n1\n\ns\n' FAKE_BAD=1 -- backup;  rcis 1; has 'setores problemáticos'; never 'zstd -T0'; called "umount $tmp/mnt"; [[ -f $dir/backup_ssd.img ]] || { echo "FALHOU: o .img devia ficar"; fail=1; }
+fresh; bd '1\n1\n\ns\n' FAKE_BAD=1 -- backup;  rcis 1; has 'setores problemáticos'; never 'zstd -T0'; called "umount $tmp/mnt"; [[ -f $dir/$bn.img ]] || { echo "FALHOU: o .img devia ficar"; fail=1; }
 # nomes que já existem
-fresh; : > "$dir/backup_ssd.img.zst"; bd '1\n1\n\n' -- backup; rcis 1; has 'já existe'; never ddrescue
-fresh; : > "$dir/backup_ssd.img"; printf '# Finished\n0x1 + 1\n0x0 0x1 +\n' > "$dir/backup_ssd.log"
+fresh; : > "$dir/$bn.img.zst"; bd '1\n1\n\n' -- backup; rcis 1; has 'já existe'; never ddrescue
+fresh; : > "$dir/$bn.img"; printf '# Finished\n0x1 + 1\n0x0 0x1 +\n' > "$dir/$bn.log"
 bd '1\n1\n\nn\n' -- backup; rcis 1; has 'já existem'; never ddrescue; never zstd; hasnt 'INTERROMPIDO'     # log acabado: nunca retoma o ddrescue; recusar o "só comprimir" cancela
 # bruto COMPLETO (log acabado e limpo): oferece só comprimir, sem ler o disco de novo
-fresh; echo dados > "$dir/backup_ssd.img"; printf '# Finished\n0x1 + 1\n0x0 0x1 +\n' > "$dir/backup_ssd.log"
+fresh; echo dados > "$dir/$bn.img"; printf '# Finished\n0x1 + 1\n0x0 0x1 +\n' > "$dir/$bn.log"
 bd '1\n1\n\ns\ns\n' -- backup; rcis 0; has 'SEM ler o disco'; has 'não será lida'; has 'NÃO foi lido agora'; never ddrescue
-called "zstd -T0 -19 --rm $dir/backup_ssd.img -o $dir/backup_ssd.img.zst"; called 'zstd -t'; called "umount $tmp/mnt"
-[[ -f $dir/backup_ssd.img.zst && ! -e $dir/backup_ssd.img ]] || { echo "FALHOU: só comprimir devia deixar o .zst e tirar o .img"; fail=1; }
+called "zstd -T0 -19 --rm $dir/$bn.img -o $dir/$bn.img.zst"; called 'zstd -t'; called "umount $tmp/mnt"
+[[ -f $dir/$bn.img.zst && ! -e $dir/$bn.img ]] || { echo "FALHOU: só comprimir devia deixar o .zst e tirar o .img"; fail=1; }
 # .zst parcial de uma compressão interrompida: é apagado (o zstd não sobrescreve), o .img completo é a fonte
-fresh; echo dados > "$dir/backup_ssd.img"; echo parcial > "$dir/backup_ssd.img.zst"; printf '# Finished\n0x1 + 1\n0x0 0x1 +\n' > "$dir/backup_ssd.log"
-bd '1\n1\n\ns\ns\n' -- backup; rcis 0; never ddrescue; [[ $(cat "$dir/backup_ssd.img.zst") == comprimido && ! -e $dir/backup_ssd.img ]] || { echo "FALHOU: o .zst parcial devia ser trocado pelo novo"; fail=1; }
+fresh; echo dados > "$dir/$bn.img"; echo parcial > "$dir/$bn.img.zst"; printf '# Finished\n0x1 + 1\n0x0 0x1 +\n' > "$dir/$bn.log"
+bd '1\n1\n\ns\ns\n' -- backup; rcis 0; never ddrescue; [[ $(cat "$dir/$bn.img.zst") == comprimido && ! -e $dir/$bn.img ]] || { echo "FALHOU: o .zst parcial devia ser trocado pelo novo"; fail=1; }
 bd '1\n1\n\nn\n' -- backup; rcis 1; never zstd                                                           # (sem o .img de novo: agora cai em "já existe o .zst")
 # com setores ruins no log, ou com --sem-compressao, ou com o .zst e um backup interrompido: nada de "só comprimir"
-fresh; echo dados > "$dir/backup_ssd.img"; printf '# Finished\n0x1 + 1\n0x0 0x1 -\n' > "$dir/backup_ssd.log"
+fresh; echo dados > "$dir/$bn.img"; printf '# Finished\n0x1 + 1\n0x0 0x1 -\n' > "$dir/$bn.log"
 bd '1\n1\n\ns\ns\n' -- backup; rcis 1; has 'já existem'; hasnt 'SEM ler'; never zstd; never ddrescue
-fresh; echo dados > "$dir/backup_ssd.img"; printf '# Finished\n0x1 + 1\n0x0 0x1 +\n' > "$dir/backup_ssd.log"
+fresh; echo dados > "$dir/$bn.img"; printf '# Finished\n0x1 + 1\n0x0 0x1 +\n' > "$dir/$bn.log"
 bd '1\n1\n\ns\ns\n' -- backup --sem-compressao; rcis 1; has 'já existem'; hasnt 'SEM ler'; never zstd
-fresh; echo dados > "$dir/backup_ssd.img"; echo parcial > "$dir/backup_ssd.img.zst"; printf '# Mapfile\n0x1 ? 1\n0x0 0x1 ?\n' > "$dir/backup_ssd.log"
+fresh; echo dados > "$dir/$bn.img"; echo parcial > "$dir/$bn.img.zst"; printf '# Mapfile\n0x1 ? 1\n0x0 0x1 ?\n' > "$dir/$bn.log"
 bd '1\n1\n\ns\ns\n' -- backup; rcis 1; has 'já existe'; never ddrescue                               # retomar com um .zst no caminho: o zstd ia falhar no fim, então recusa antes
-fresh; : > "$dir/backup_ssd.img"; printf '# Mapfile\n0x1 ? 1\n0x0 0x1 ?\n' > "$dir/backup_ssd.log"
+fresh; : > "$dir/$bn.img"; printf '# Mapfile\n0x1 ? 1\n0x0 0x1 ?\n' > "$dir/$bn.log"
 bd '1\n1\n\nn\n' -- backup; rcis 1; has 'já existem'; never ddrescue                                         # interrompido: não retomar = recusa
 bd '1\n1\n\ns\ns\n' -- backup; rcis 0; called 'ddrescue -v /dev/sda'                                         # retomar: roda o mesmo comando
 
@@ -211,8 +215,9 @@ BD_PATH=$(mkpath nada) bd '' -- limpar --sem-cache --sem-snapshots --sem-fstrim;
 if command -v setpriv >/dev/null; then
   cp "$here/../backup-disco.sh" "$tmp/bd.sh"; chmod 755 "$tmp/bd.sh"
   printf '#!/bin/bash\necho "SUDO $*"\n' > "$tmp/fake/sudo"; chmod +x "$tmp/fake/sudo"
-  out=$(setpriv --reuid=65534 --regid=65534 --clear-groups env PATH="$tmp/fake:$PATH" bash "$tmp/bd.sh" limpar --sem-cache --nivel=12 2>&1)
-  grep -qF 'SUDO bash '"$tmp"'/bd.sh limpar --sem-cache --nivel=12' <<<"$out" || { echo "FALHOU: o sudo devia receber a ação e as opções ($out)"; fail=1; }
+  out=$(setpriv --reuid=65534 --regid=65534 --clear-groups env PATH="$tmp/fake:$PATH" BACKUP_MNT=/mnt/meu BACKUP_DIR_NAME="Minha Pasta" bash "$tmp/bd.sh" limpar --sem-cache --nivel=12 2>&1)
+  grep -qF 'SUDO env BACKUP_MNT=/mnt/meu BACKUP_DIR_NAME=Minha Pasta bash '"$tmp"'/bd.sh limpar --sem-cache --nivel=12' <<<"$out" \
+    || { echo "FALHOU: o sudo devia receber as variáveis, a ação e as opções ($out)"; fail=1; }
 else echo "pulado: sem setpriv para testar a reexecução com sudo"; fi
 
 ((fail)) && exit 1

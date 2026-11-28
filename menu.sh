@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # menu.sh — TUI do Minhas-Paradas: um menu pai (Instalação | Backup) e, dentro de cada um, ↑/↓ (ou j/k) escolhem,
-# Enter roda o script certo como processo filho e volta para a tela. Ações que alteram o sistema pedem "Tem certeza?". Também reinicia, desliga (não no
-# Termux nem no proot: lá o item some) e fecha o terminal. Como o nmtui e o alsamixer, o menu vive na tela
-# alternativa do terminal: ao sair (ou com Ctrl+C) o terminal volta exatamente como estava, sem vestígios.
+# Enter roda o script certo como processo filho e volta para a tela. Ações que alteram o sistema pedem "Tem certeza?".
+# Também reinicia, desliga (não no Termux nem no proot: lá o item some) e fecha o terminal. Como o nmtui e o alsamixer,
+# o menu vive na tela alternativa do terminal: ao sair (ou com Ctrl+C) o terminal volta exatamente como estava, sem vestígios.
 # Uso: bash menu.sh  (como usuário normal: os scripts pedem sudo sozinhos; o nvidia.sh recusa root)
 # Sem clone: curl -fsSL https://raw.githubusercontent.com/V0LtagE1z/Minhas-Paradas/main/menu.sh | bash
 #   Sem os outros scripts ao lado, o menu baixa (curl ou wget, sem git nem tar) só o script do item que você

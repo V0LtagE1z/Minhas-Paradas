@@ -24,6 +24,11 @@ Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep 
 
 - Só no que esta branch adiciona: rodar o `backup-disco.sh` contra o `lsblk` real (num sistema sem partições) mostrou que `lsblk -r` junto com `-P` é recusado (`mutually exclusive arguments`), coisa que o `lsblk` de mentira aceitava; a listagem de partições passou a usar só `-P`, e o `zram0` (0 byte) deixou de aparecer como disco. O teste agora rejeita essa combinação.
 
+- `backup-disco.sh`: escolher "09" numa lista dava erro do bash (`09` lido como octal); agora é lido como decimal e só aceita até 4 dígitos.
+- `backup-disco.sh`: ao se reabrir com `sudo`/`doas`, o script perdia `BACKUP_MNT` e `BACKUP_DIR_NAME` (o `sudo` limpa o ambiente) e usava os padrões; agora as duas seguem junto.
+- `backup-disco.sh`: o nome padrão do backup passa a ser `backup_ssd_AAAAMMDD` (era `backup_ssd`, que esbarrava no backup anterior); se o `ddrescue` falhar, a mensagem diz o nome a digitar para retomar.
+- `menu.sh`: linha do cabeçalho com mais de 120 colunas, quebrada em três.
+
 #### Planejado
 
 - Ligar o backup do Termux (`Termux/Backup_Termux.sh` e `Backup-Restore.sh`) ao item que já existe na tela Backup: precisa rodar com `zsh` e baixar os dois arquivos na rota sem clone. Falta também decidir o nome padrão da restauração (veja "Limitações" no README).

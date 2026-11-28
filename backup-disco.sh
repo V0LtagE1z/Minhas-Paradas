@@ -66,7 +66,7 @@ need() {  # comandos... — sem eles não dá para seguir (em --dry-run só avis
 root_or_exec() {  # tudo aqui precisa de root: reexecuta com sudo/doas, mantendo o terminal
   [[ $EUID == 0 ]] && return 0
   local su; su=$(command -v sudo || command -v doas) || die "rode como root (sem sudo nem doas aqui)"
-  exec "$su" bash "$0" "${ARGS[@]}"
+  exec "$su" env "BACKUP_MNT=$MNT" "BACKUP_DIR_NAME=$DIRNAME" bash "$0" "${ARGS[@]}"   # o sudo limpa o ambiente: leva as duas variáveis do script
 }
 
 ask() { local r; printf '%s [s/N] ' "$1"; read -r r || return 1; [[ $r == [sSyY]* ]]; }
@@ -82,7 +82,7 @@ choose() {  # "pergunta" máximo — número de 1 a máximo em CH; q cancela
   while :; do
     printf '%s' "$1"; read -r r || die "sem resposta (entrada fechada)"
     [[ $r == q ]] && die "cancelado"
-    [[ $r =~ ^[0-9]+$ ]] && ((r >= 1 && r <= $2)) && { CH=$r; return 0; }
+    [[ $r =~ ^[0-9]{1,4}$ ]] && ((10#$r >= 1 && 10#$r <= $2)) && { CH=$((10#$r)); return 0; }   # 10#: "010" é dez, não oito (octal)
     echo "Digite um número de 1 a $2 (q cancela)."
   done
 }
@@ -200,7 +200,8 @@ cmd_backup() {
   in_use "$src" && die "$src tem partição montada ou swap em uso. Rode no live boot (SystemRescue), com o disco de origem desmontado."
   mount_part "Partição de DESTINO (onde ficará o backup)" "$src"
   run mkdir -p "$DIR" || die "não consegui criar $DIR"
-  printf 'Nome do backup, sem extensão [backup_ssd]: '; read -r name || die "sem resposta"; name=${name:-backup_ssd}
+  local dflt; dflt=backup_ssd_$(date +%Y%m%d)   # com a data, o backup de hoje não esbarra no de ontem
+  printf 'Nome do backup, sem extensão [%s]: ' "$dflt"; read -r name || die "sem resposta"; name=${name:-$dflt}
   [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || die "nome inválido (use letras, números, . _ -): $name"
   img=$DIR/$name.img mapf=$DIR/$name.log zst=$img.zst
   [[ -e $zst && ! -e $img ]] && die "já existe $zst. Apague-o ou escolha outro nome."
@@ -224,7 +225,7 @@ cmd_backup() {
   ((NOZ)) && echo "Depois: fica só o .img (sem compressão)" || echo "Depois: zstd -T0 -$NIVEL --rm -> $name.img.zst, teste, umount"
   if ((only_zip)); then ask "Comprimir $name.img?" || die "cancelado"; else ask "Fazer o backup de $src?" || die "cancelado"; fi
   if ((! only_zip)); then
-    run ddrescue -v "$src" "$img" "$mapf" || die "o ddrescue falhou (código $?). Rode de novo, com o mesmo nome: ele continua de onde parou."
+    run ddrescue -v "$src" "$img" "$mapf" || die "o ddrescue falhou (código $?). Rode de novo e digite o mesmo nome ($name): ele continua de onde parou."
     if ! ((DRY_RUN)); then
       log_ok "$mapf" || die "o ddrescue terminou com setores problemáticos (veja $mapf: só um bloco '+' é um backup limpo). O .img NÃO foi comprimido."
     fi
