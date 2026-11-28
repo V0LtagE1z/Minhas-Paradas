@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# menu.sh — TUI do Minhas-Paradas: ↑/↓ (ou j/k) escolhem, Enter roda o script certo como processo filho e
-# volta para esta tela. Ações que alteram o sistema pedem "Tem certeza?". Também reinicia, desliga (não no
+# menu.sh — TUI do Minhas-Paradas: um menu pai (Instalação | Backup) e, dentro de cada um, ↑/↓ (ou j/k) escolhem,
+# Enter roda o script certo como processo filho e volta para a tela. Ações que alteram o sistema pedem "Tem certeza?". Também reinicia, desliga (não no
 # Termux nem no proot: lá o item some) e fecha o terminal. Como o nmtui e o alsamixer, o menu vive na tela
 # alternativa do terminal: ao sair (ou com Ctrl+C) o terminal volta exatamente como estava, sem vestígios.
 # Uso: bash menu.sh  (como usuário normal: os scripts pedem sudo sozinhos; o nvidia.sh recusa root)
@@ -131,6 +131,7 @@ can_cachy()   { ((DESKTOP)) && [[ $SYS_ID == arch || $SYS_ID == endeavouros ]] &
 can_themes()  { ((DESKTOP)) && ! is_wsl && [[ $FAM != alpine ]]; }                                  # GRUB/Plymouth: sem bootloader no WSL, sem mkinitcpio/dracut no Alpine
 can_nvidia()  { ((DESKTOP)) && ! is_wsl; }                                                            # o nvidia.sh recusa Termux, proot e WSL
 can_nvidia_install() { can_nvidia && [[ $FAM == arch || $FAM == debian || $FAM == fedora ]]; }       # e só instala em Arch, Debian/Ubuntu e Fedora
+can_disk()    { ((DESKTOP)) && ! is_wsl; }                                                              # backup de disco: precisa de disco de verdade (o WSL não tem)
 
 # ─── Ações ────────────────────────────────────────────────────────────────────
 rule() {  # texto — linha de título, larga como o menu: marca onde começa e termina a saída de cada comando (que sai na tela normal)
@@ -176,6 +177,15 @@ power() {  # reboot|poweroff  verbo — o menu já perguntou "Tem certeza?"
   $su "$1" || echo "[!!] não consegui $2 (em container isso não existe)."
 }
 
+# shortcut: o backup do Termux (Termux/Backup_Termux.sh e Backup-Restore.sh, escritos em zsh) ainda não roda pelo menu: o item
+#   só mostra o comando. Upgrade: rodar os dois com zsh no run_script (hoje ele sempre usa bash) e trazê-los em "need".
+termux_backup_soon() {
+  rule "▶ $TITLE"
+  echo "[!!] Ainda não está ligado ao menu. No Termux, dentro do repo clonado, rode:"
+  echo "     zsh Termux/Backup_Termux.sh     (faz o backup em ~/storage/shared/Documents)"
+  echo "     zsh Termux/Backup-Restore.sh    (restaura; aceita o caminho do arquivo)"
+}
+
 close_terminal() {
   # "exit" aqui só encerraria o menu; fechar o terminal é mandar SIGHUP ao shell que o chamou.
   case $(cat "/proc/$PPID/comm" 2>/dev/null) in
@@ -191,6 +201,10 @@ pause() { printf '\nEnter para voltar ao menu... '; read -r -u 3 _ || exit 0; }
 # O que não funciona neste sistema (a condição, avaliada com eval, falha) só entra no menu com "Mostrar todas as opções":
 # em vermelho, com o motivo na descrição, e sem rodar. AV é 1 se funciona aqui e 0 se não.
 SHOWALL=0
+# Telas: root (menu pai) → install (o menu de instalação) e backup. q volta para o pai; no pai, sai.
+# MENU_START (root, install ou backup) existe só para o teste abrir direto numa tela.
+case ${MENU_START:-root} in install|backup) SCREEN=$MENU_START ;; *) SCREEN=root ;; esac
+ROOTSEL=0   # item do menu pai de onde se entrou: é onde a seleção volta
 LBL=(); DESC=(); CONF=(); CMD=(); AV=(); WHY=()
 item() {
   local ok=1; eval "$1" || ok=0
@@ -201,14 +215,26 @@ build_menu() {
   local nv_why="Nem no WSL, Termux, proot-distro" c_reb="reiniciar o computador" c_off="desligar o computador" all=não
   LBL=(); DESC=(); CONF=(); CMD=(); AV=(); WHY=()
   can_nvidia && nv_why="só Arch, Debian/Ubuntu, Fedora"
-  item true "" "Setup completo" "Escolha as opções e rode o setup|(simular, repos, temas...)" "" "sub:setup"
-  item true "" "Dotfiles: só aplicar" "Baixa e aplica .zshrc, p10k e|kitty.conf (backup .bak)" "aplicar só os dotfiles" "run_script setup.sh --dotfiles"
-  item can_mirrors "Arch, Fedora e Termux" "Ranquear os mirrors" "Ranqueia os mirrors; no Arch|também atualiza o sistema" "ranquear os mirrors" "run_script mirrors.sh"
-  item can_themes "Nem no WSL, Termux, proot-distro, Alpine" "Reverter temas Minecraft" "Desfaz os temas Minecraft|(GRUB + Plymouth)" "reverter os temas Minecraft" "run_script setup.sh --reverter-temas"
-  item can_nvidia "$nv_why" "NVIDIA: detectar GPU" "Detecta a GPU e o ambiente|(só leitura)" "" "run_script nvidia.sh"
-  item can_nvidia_install "$nv_why" "NVIDIA: instalar driver" "Escolha as opções e instale o|driver NVIDIA (simular, PRIME...)" "" "sub:nvidia"
-  item '((DESKTOP))' "não roda no Termux nem proot" "OXWM: instalar configuração" "Escolha as opções (startx, login)|e instale a config. do OXWM" "" "sub:oxwm"
-  item '((DESKTOP))' "não roda no Termux nem proot" "Caelestia: instalar + atalhos" "Escolha as opções e instale o|Caelestia, ou só a config (Arch)" "" "sub:caelestia"
+  case $SCREEN in
+    root)
+      item true "" "Instalação e configuração" "Setup, dotfiles, mirrors e outras|configurações do sistema" "" "screen:install"
+      item 'can_disk || ((IS_TERMUX))' "Nem no WSL nem no proot" "Backup" "Backup e restauração de discos|(Termux: em breve)" "" "screen:backup" ;;   # a tela nunca fica vazia
+    backup)
+      item can_disk "Nem no WSL, Termux nem proot" "Limpar antes do backup" "Cache, journal, snapshots e fstrim|(roda no sistema normal)" "" "sub:bk_limpar"
+      item can_disk "Nem no WSL, Termux nem proot" "Fazer backup do disco" "Disco inteiro em .img.zst. Rode no|live boot (SystemRescue)" "" "sub:bk_backup"
+      item can_disk "Nem no WSL, Termux nem proot" "Restaurar backup do disco" "SOBRESCREVE um disco inteiro;|rode no live boot (SystemRescue)" "" "sub:bk_restaurar"
+      item '((IS_TERMUX))' "só no Termux" "Termux: backup e restauração" "Em breve no menu; Enter mostra|como rodar hoje" "" "termux_backup_soon" ;;
+    *)
+      item true "" "Setup completo" "Escolha as opções e rode o setup|(simular, repos, temas...)" "" "sub:setup"
+      item true "" "Dotfiles: só aplicar" "Baixa e aplica .zshrc, p10k e|kitty.conf (backup .bak)" "aplicar só os dotfiles" "run_script setup.sh --dotfiles"
+      item can_mirrors "Arch, Fedora e Termux" "Ranquear os mirrors" "Ranqueia os mirrors; no Arch|também atualiza o sistema" "ranquear os mirrors" "run_script mirrors.sh"
+      item can_themes "Nem no WSL, Termux, proot-distro, Alpine" "Reverter temas Minecraft" "Desfaz os temas Minecraft|(GRUB + Plymouth)" "reverter os temas Minecraft" "run_script setup.sh --reverter-temas"
+      item can_nvidia "$nv_why" "NVIDIA: detectar GPU" "Detecta a GPU e o ambiente|(só leitura)" "" "run_script nvidia.sh"
+      item can_nvidia_install "$nv_why" "NVIDIA: instalar driver" "Escolha as opções e instale o|driver NVIDIA (simular, PRIME...)" "" "sub:nvidia"
+      item '((DESKTOP))' "não roda no Termux nem proot" "OXWM: instalar configuração" "Escolha as opções (startx, login)|e instale a config. do OXWM" "" "sub:oxwm"
+      item '((DESKTOP))' "não roda no Termux nem proot" "Caelestia: instalar + atalhos" "Escolha as opções e instale o|Caelestia, ou só a config (Arch)" "" "sub:caelestia"
+      ;;
+  esac
   NINST=${#LBL[@]}
   ((SHOWALL)) && all=sim
   is_wsl && { c_reb=""; c_off=""; }   # no WSL só aparece o aviso
@@ -268,14 +294,14 @@ draw() {
   if ((${AV[sel]})); then d1=${DESC[sel]%%|*}; d2=${DESC[sel]#*|}; else d1="Não funciona nesse sistema:"; d2=${WHY[sel]}; fi
   paint "$(
     layout $((N + 9))   # 3 caixas (N itens + 2 bordas cada, +2 linhas de descrição) + a linha de teclas
-    box_top "Minhas-Paradas"
+    case $SCREEN in root) box_top "Minhas-Paradas" ;; install) box_top "Instalação" ;; *) box_top "Backup" ;; esac
     for ((i = 0; i < NINST; i++)); do box_row "${LBL[i]}" $((i == sel)) $((!${AV[i]})); done
     box_bottom
     box_top "Sistema"
     for ((i = NINST; i < N; i++)); do box_row "${LBL[i]}" $((i == sel)) $((!${AV[i]})); done
     box_bottom
     box_top "Descrição"; box_row "$d1"; box_row "$d2"; box_bottom
-    printf '%s ↑↓ mover   Enter escolher   a todas   q sair\n' "$LP"
+    printf '%s ↑↓ mover   Enter escolher   a todas   q %s\n' "$LP" "$([[ $SCREEN == root ]] && echo sair || echo voltar)"
   )"
 }
 
@@ -394,6 +420,28 @@ sub_caelestia() {
   fi
 }
 
+# Backup de disco (backup-disco.sh): os discos e partições o próprio script lista e pergunta, com modelo e serial, porque
+# escolher um disco que será sobrescrito não cabe numa opção que gira de valor. Aqui só entram as opções do comando.
+sub_bk_limpar() {
+  sub_reset; SUB_SCRIPT=backup-disco.sh; SUB_BASE=(limpar); SUB_CONF="limpar o sistema para o backup"
+  sopt "Simular (dry-run)" "Mostra o que seria feito|sem alterar nada" "não|sim" "-|--dry-run"
+  sopt "Cache de pacotes" "Limpa o cache da distro (pacman,|apt, dnf, emerge)" "limpar|pular" "-|--sem-cache"
+  sopt "Journal do systemd" "Reduz o journal a 200 MB|(journalctl --vacuum-size)" "limpar|pular" "-|--sem-journal"
+  sopt "Snapshots (snapper)" "Lista e pergunta quais apagar|(só btrfs com snapper)" "escolher|pular" "-|--sem-snapshots"
+  sopt "fstrim (por último)" "Descarta os blocos livres (TRIM);|sempre depois de tudo" "rodar|pular" "-|--sem-fstrim"
+}
+
+sub_bk_backup() {
+  sub_reset; SUB_SCRIPT=backup-disco.sh; SUB_BASE=(backup); SUB_CONF="fazer o backup do disco"
+  sopt "Simular (dry-run)" "Mostra o que seria feito|sem alterar nada" "não|sim" "-|--dry-run"
+  sopt "Compressão (zstd)" "Nível do zstd: 19 é o menor e mais|lento; 12 poupa o PC fraco" "19|12|3|sem compressão" "-|--nivel=12|--nivel=3|--sem-compressao"
+}
+
+sub_bk_restaurar() {
+  sub_reset; SUB_SCRIPT=backup-disco.sh; SUB_BASE=(restaurar); SUB_CONF="restaurar um backup de disco"
+  sopt "Simular (dry-run)" "Mostra o que seria feito|sem alterar nada" "não|sim" "-|--dry-run"
+}
+
 sub_go() {  # 0 = pode rodar (antes confirma, se vai alterar o sistema); 1 = não
   compose
   [[ -z $SUB_CONF || " ${RUN[*]} " == *" --dry-run "* ]] || confirm "$SUB_CONF"
@@ -468,6 +516,7 @@ while :; do
     enter|' ')
       ((${AV[sel]})) || continue   # em vermelho: não funciona aqui (a descrição diz por quê)
       if [[ ${CMD[sel]} == toggle_all ]]; then toggle_all; continue; fi
+      if [[ ${CMD[sel]} == screen:* ]]; then ROOTSEL=$sel; SCREEN=${CMD[sel]#screen:}; build_menu; sel=0; continue; fi
       if [[ ${CMD[sel]} == sub:* ]]; then   # submenu: as opções e o "Tem certeza" ficam lá dentro
         TITLE=${LBL[sel]}
         "sub_${CMD[sel]#sub:}"
@@ -481,6 +530,6 @@ while :; do
       ${CMD[sel]}
       pause
       alt_on ;;
-    q) exit 0 ;;
+    q) [[ $SCREEN == root ]] && exit 0; SCREEN=root; build_menu; sel=$ROOTSEL ;;
   esac
 done

@@ -5,7 +5,7 @@ set -u
 here=$(dirname "$(readlink -f -- "${BASH_SOURCE[0]}")")
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 mkdir "$tmp/fake" "$tmp/bin"
-for s in setup.sh mirrors.sh nvidia.sh oxwm-setup.sh caelestia-setup.sh; do
+for s in setup.sh mirrors.sh nvidia.sh oxwm-setup.sh caelestia-setup.sh backup-disco.sh; do
   # cada script de mentira mostra os argumentos e as variáveis que as opções do menu podem ligar
   printf '#!/usr/bin/env bash\necho "FAKE %s $*"\necho "ENV SKIP_MIRRORS=${SKIP_MIRRORS:-} SKIP_LOCALES=${SKIP_LOCALES:-} SKIP_TERMUX_UPGRADE=${SKIP_TERMUX_UPGRADE:-} WSL_INSTALL_GUI=${WSL_INSTALL_GUI:-}"\n' "$s" > "$tmp/$s"
 done
@@ -30,12 +30,13 @@ fail=0
 run() {  # teclas [VAR=valor ...] — \n = Enter, \033[B = seta para baixo; a saída fica em $out
   printf '%b' "$1" > "$tmp/in"; shift
   out=$(env TERM=dumb KERNEL_RELEASE=6.0.0-generic PREFIX= FORCE_PROOT=0 COLUMNS= LINES= OS_RELEASE_FILE="$tmp/os-arch" UNAME_M=x86_64 \
-        ARCH_RELEASE_FILE="$tmp/none" "$@" MENU_DIR="$tmp" MENU_TTY="$tmp/in" PATH="$tmp/fake:$PATH" bash "$here/../menu.sh" 2>&1); rc=$?
+        ARCH_RELEASE_FILE="$tmp/none" MENU_START=install "$@" MENU_DIR="$tmp" MENU_TTY="$tmp/in" PATH="$tmp/fake:$PATH" bash "$here/../menu.sh" 2>&1); rc=$?
   [[ $rc == 0 ]] || { echo "FALHOU: o menu saiu com $rc"; fail=1; }
 }
 has()   { grep -qF -- "$1" <<<"$out" || { echo "FALHOU: faltou \"$1\""; fail=1; }; }
 hasnt() { ! grep -qF -- "$1" <<<"$out" || { echo "FALHOU: não devia ter \"$1\""; fail=1; }; }
 
+# Estes testes abrem direto na tela de instalação (run põe MENU_START=install); o menu pai e o Backup têm testes mais abaixo.
 # Itens num Arch x86_64 de desktop: 0 Setup (submenu) | 1 Dotfiles | 2 mirrors | 3 reverter temas | 4 NVIDIA detectar | 5 NVIDIA instalar (submenu)
 #   | 6 OXWM (submenu) | 7 Caelestia (submenu)
 #   | 8 Mostrar todas as opções | 9 Reiniciar | 10 Desligar | 11 Fechar | 12 Sair
@@ -257,6 +258,91 @@ run '\njjjjj\nrs\nq' KERNEL_RELEASE=5.15.153.1-microsoft-standard-WSL2; has 'WSL
 # Fora do WSL essas opções não aparecem.
 run '\nqq'; hasnt 'Kitty e fonte no Linux'; hasnt 'Usuário padrão do WSL'
 
+# ─── Menu pai e Backup ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+# Menu pai (MENU_START= vazio): 0 Instalação | 1 Backup | 2 Mostrar todas | 3 Reiniciar | 4 Desligar | 5 Fechar | 6 Sair
+# Tela de Backup (Arch desktop): 0 Limpar | 1 Fazer backup | 2 Restaurar | 3 Mostrar todas | ... (o placeholder do Termux só no Termux)
+run 'q' MENU_START=
+has 'Instalação e configuração'; has 'configurações do sistema'; has 'q sair'; has 'Fechar este terminal'; grep -qE '│ +Backup +│' <<<"$out" || { echo 'FALHOU: faltou o item Backup'; fail=1; }
+hasnt 'Setup completo'; hasnt 'Limpar antes do backup'; hasnt 'q voltar'
+# Enter abre a tela; q volta ao pai (não sai do menu); a seleção volta ao item de onde se entrou.
+run '\nqq' MENU_START=
+has 'Setup completo'; has 'q voltar'
+[[ $(grep -c 'Instalação e configuração' <<<"$out") == 2 ]] || { echo "FALHOU: q devia voltar ao menu pai (viu $(grep -c 'Instalação e configuração' <<<"$out") vezes o item, esperava 2)"; fail=1; }
+run 'j\nqq' MENU_START=
+has 'Limpar antes do backup'
+[[ $(grep -c 'Backup e restauração de discos' <<<"$out") == 2 ]] || { echo "FALHOU: ao voltar, a seleção devia estar no Backup"; fail=1; }
+# No menu pai o q sai, e o Sair do menu também.
+run 'jjjjjj\n' MENU_START=; hasnt '▶'
+# O Enter no "Setup completo" dentro da Instalação ainda roda o setup (o caminho completo, a partir do menu pai).
+run '\n\n\nr\nq' MENU_START=; has 'FAKE setup.sh --sem-encerrar --dry-run'
+# Reiniciar vem do menu pai também, e o Termux não o tem.
+run 'jjj\ns\nq' MENU_START=; has 'FAKE reboot'
+run 'q' MENU_START= "$TERMUX"; hasnt 'Reiniciar'; has 'Instalação e configuração'; has 'Backup'
+
+# Backup: os três itens e o que cada opção vira na linha de comando.
+run 'q' MENU_START=backup
+has 'Limpar antes do backup'; has 'Fazer backup do disco'; has 'Restaurar backup do disco'; hasnt 'Termux: backup'; hasnt 'Setup completo'
+run '\nrs\nq' MENU_START=backup
+has 'limpar o sistema para o backup'; has 'FAKE backup-disco.sh limpar'
+[[ $out == *'━━ ▶ Limpar antes do backup ━'*'$ bash backup-disco.sh limpar'*'FAKE backup-disco.sh limpar'*'✔ backup-disco.sh terminou (código 0)'* ]] \
+  || { echo "FALHOU: faltou o título, o comando ou a linha de fim em volta do backup-disco.sh"; fail=1; }
+run '\n\nr\nq' MENU_START=backup; has 'FAKE backup-disco.sh limpar --dry-run'; hasnt 'Tem certeza'
+run '\nj\nrs\nq'    MENU_START=backup; has 'FAKE backup-disco.sh limpar --sem-cache'
+run '\njj\nrs\nq'   MENU_START=backup; has 'FAKE backup-disco.sh limpar --sem-journal'
+run '\njjj\nrs\nq'  MENU_START=backup; has 'FAKE backup-disco.sh limpar --sem-snapshots'
+run '\njjjj\nrs\nq' MENU_START=backup; has 'FAKE backup-disco.sh limpar --sem-fstrim'
+run '\n\nj\nr\nq'   MENU_START=backup; has 'FAKE backup-disco.sh limpar --dry-run --sem-cache'; hasnt 'Tem certeza'
+run 'j\nrs\nq' MENU_START=backup; has 'fazer o backup do disco'; has 'FAKE backup-disco.sh backup'; hasnt '--nivel'; hasnt '--sem-compressao'
+run 'j\nj\nrs\nq'     MENU_START=backup; has 'FAKE backup-disco.sh backup --nivel=12'
+run 'j\nj\n\nrs\nq'   MENU_START=backup; has 'FAKE backup-disco.sh backup --nivel=3'
+run 'j\nj\n\n\nrs\nq' MENU_START=backup; has 'FAKE backup-disco.sh backup --sem-compressao'
+run 'j\n\nr\nq' MENU_START=backup; has 'FAKE backup-disco.sh backup --dry-run'; hasnt 'Tem certeza'
+run 'jj\nrs\nq' MENU_START=backup; has 'restaurar um backup de disco'; has 'FAKE backup-disco.sh restaurar'
+run 'jj\nrn' MENU_START=backup; has 'Tem certeza'; hasnt 'FAKE backup-disco.sh'                            # n cancela e nada roda
+# Do menu pai até o disco: Backup → Fazer backup → Executar.
+run 'j\nj\nrs\nq' MENU_START=; has 'FAKE backup-disco.sh backup'
+# Onde não há disco de verdade (Termux, proot, WSL): os itens somem; com "mostrar todas" voltam em vermelho, sem rodar.
+for env in "$TERMUX" FORCE_PROOT=1 KERNEL_RELEASE=5.15.153.1-microsoft-standard-WSL2; do
+  run 'q' MENU_START=backup "$env"; hasnt 'Limpar antes do backup'; hasnt 'Fazer backup do disco'; hasnt 'Restaurar backup do disco'
+  run 'akkq' MENU_START=backup "$env"; has '✗ Fazer backup do disco'; has 'Nem no WSL, Termux nem proot'   # a seleção fica onde estava; kk sobe até um item vermelho
+  run 'a\nq' MENU_START=backup "$env"; hasnt 'FAKE backup-disco.sh'; hasnt 'Tem certeza'
+done
+# No menu pai, o Backup só existe onde a tela tem o que mostrar: desktop e Termux (WSL e proot não: ela ficaria vazia).
+for env in FORCE_PROOT=1 KERNEL_RELEASE=5.15.153.1-microsoft-standard-WSL2; do
+  run 'q' MENU_START= "$env"; ! grep -qE '│ +Backup +│' <<<"$out" || { echo "FALHOU: o menu pai não devia ter o Backup ($env)"; fail=1; }
+  run 'aq' MENU_START= "$env"; grep -qE '│ +✗ Backup +│' <<<"$out" || { echo "FALHOU: em mostrar-todas o Backup devia vir marcado ✗ ($env)"; fail=1; }
+  run 'ajq' MENU_START= "$env"; has 'Nem no WSL nem no proot'
+done
+run 'q' MENU_START= "$TERMUX"; grep -qE '│ +Backup +│' <<<"$out" || { echo "FALHOU: o Termux devia ter o Backup (do Termux)"; fail=1; }
+# Termux: o item do backup do Termux aparece (e só ele); Enter mostra como rodar hoje e não chama script nenhum.
+run 'q' MENU_START=backup "$TERMUX" OS_RELEASE_FILE="$tmp/os-empty"; has 'Termux: backup e restauração'; hasnt 'Limpar antes do backup'
+run '\nq' MENU_START=backup "$TERMUX" OS_RELEASE_FILE="$tmp/os-empty"
+has '▶ Termux: backup e restauração'; has 'zsh Termux/Backup_Termux.sh'; has 'zsh Termux/Backup-Restore.sh'; hasnt 'FAKE'; hasnt 'Tem certeza'
+run 'q' MENU_START=backup; hasnt 'Termux: backup'                                                           # fora do Termux ele nem aparece
+run 'aq' MENU_START=backup; has '✗ Termux: backup e restauração'; hasnt 'FAKE'                              # em "mostrar todas": vermelho, sem rodar
+# Terminal estreito (40 colunas): nada cortado no menu pai, na tela de Backup, nos submenus e nos "Tem certeza".
+for os in arch ubuntu fedora alpine; do
+  run "${walk}q" COLUMNS=40 MENU_START= OS_RELEASE_FILE="$tmp/os-$os"; hasnt '…'
+  run "j\n${walk}qq" COLUMNS=40 MENU_START= OS_RELEASE_FILE="$tmp/os-$os"; hasnt '…'
+  for item in '' j jj; do
+    run "${item}\n${walk}qq" COLUMNS=40 MENU_START=backup OS_RELEASE_FILE="$tmp/os-$os"; hasnt '…'
+    run "${item}\nr" COLUMNS=40 MENU_START=backup OS_RELEASE_FILE="$tmp/os-$os"; hasnt '…'
+  done
+done
+for env in "$TERMUX" FORCE_PROOT=1 KERNEL_RELEASE=5.15.153.1-microsoft-standard-WSL2; do
+  run "a${walk}q" COLUMNS=40 MENU_START=backup "$env"; hasnt '…'
+  run "j\n\n" COLUMNS=40 MENU_START=backup "$env" OS_RELEASE_FILE="$tmp/os-empty"; hasnt '…'
+done
+# Todas as linhas de caixa têm a mesma largura (60 sem terminal) no menu pai, no Backup e nos submenus de backup.
+if command -v python3 >/dev/null; then
+  run 'j\nj\nrs\nq' MENU_START=
+  bad=$(python3 -c 'import sys
+for l in sys.stdin:
+    l = l.rstrip("\n")
+    if l and l[0] in "╭│╰" and len(l) != 60: print(len(l), l)' <<<"$out")
+  [[ -z $bad ]] || { echo "FALHOU: caixa desalinhada no menu pai ou no Backup:"; echo "$bad"; fail=1; }
+fi
+
 # Sem bash: um shell POSIX (dash/ash) com um PATH que só tem um "apk" de mentira avisa e mostra o comando.
 posix=$(command -v dash || command -v ash || true)
 if [[ -z $posix ]]; then echo "pulado: nenhum dash/ash para testar a checagem do bash"
@@ -281,7 +367,7 @@ chmod +x "$tmp/fake/curl"
 remote() {  # teclas [VAR=valor ...] — roda o menu a partir de uma pasta vazia, lido do pipe
   printf '%b' "$1" > "$tmp/in"; shift; : > "$tmp/curl.log"
   out=$(cd "$tmp/empty" && cat "$here/../menu.sh" | env KERNEL_RELEASE=6.0.0-generic PREFIX= FORCE_PROOT=0 OS_RELEASE_FILE="$tmp/os-arch" UNAME_M=x86_64 \
-        ARCH_RELEASE_FILE="$tmp/none" "$@" MENU_TTY="$tmp/in" TERM=dumb TMPDIR="$tmp/t" FAKE_LOG="$tmp/curl.log" PATH="$tmp/fake:$PATH" bash 2>&1); rc=$?
+        ARCH_RELEASE_FILE="$tmp/none" MENU_START=install "$@" MENU_TTY="$tmp/in" TERM=dumb TMPDIR="$tmp/t" FAKE_LOG="$tmp/curl.log" PATH="$tmp/fake:$PATH" bash 2>&1); rc=$?
 }
 fetched() { grep -o '[^/]*$' "$tmp/curl.log" | sort | tr '\n' ' '; }   # nomes dos arquivos baixados
 raw=https://raw.githubusercontent.com/V0LtagE1z/Minhas-Paradas
@@ -305,6 +391,12 @@ grep -qx "$raw/main/.config/oxwm/config.lua" "$tmp/curl.log" || { echo "FALHOU: 
 # O Caelestia usa os três arquivos de .config/caelestia/ (2 .lua e o shell.json): vêm junto; nada além disso.
 remote 'jjjjjjj\nrs\nq'; [[ $(fetched) == "caelestia-setup.sh hypr-user.lua hypr-vars.lua shell.json " ]] || { echo "FALHOU: Caelestia devia baixar o script e os 3 arquivos, baixou: $(fetched)"; fail=1; }
 grep -qx "$raw/main/.config/caelestia/hypr-vars.lua" "$tmp/curl.log" || { echo "FALHOU: hypr-vars.lua devia vir de .config/caelestia/ (baixou: $(tr '\n' ' ' < "$tmp/curl.log"))"; fail=1; }
+# O Backup baixa só o backup-disco.sh (ele não usa nenhum outro arquivo do repo).
+remote 'j\nrs\nq' MENU_START=backup; has 'REMOTE backup-disco.sh backup'; has "STDIN=$tmp/in"
+[[ $(cat "$tmp/curl.log") == "$raw/main/backup-disco.sh" ]] || { echo "FALHOU: o backup devia baixar só o backup-disco.sh, baixou: $(tr '\n' ' ' < "$tmp/curl.log")"; fail=1; }
+remote 'jj\nrs\nq' MENU_START=backup MENU_REF=v1; [[ $(cat "$tmp/curl.log") == "$raw/v1/backup-disco.sh" ]] || { echo "FALHOU: devia baixar o backup-disco.sh de v1, baixou: $(tr '\n' ' ' < "$tmp/curl.log")"; fail=1; }
+# Abrir o menu pai e entrar no Backup sem escolher nada não baixa nada.
+remote 'j\nqq' MENU_START=; [[ ! -s $tmp/curl.log ]] || { echo "FALHOU: só navegar baixou algo: $(fetched)"; fail=1; }
 # Download que falha: erro claro, o menu continua (não cai), nada roda e nada sobra em disco.
 remote '\n\nr\nq' FAKE_FAIL=1
 [[ $rc == 0 ]] || { echo "FALHOU: download falho não devia derrubar o menu (saiu com $rc)"; fail=1; }

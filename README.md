@@ -15,7 +15,9 @@ curl -fsSL https://raw.githubusercontent.com/V0LtagE1z/Minhas-Paradas/main/menu.
 | ------- | -------------- |
 | `setup.sh` | O script principal: cria o usuário `gustavo`, instala pacotes, locales, oh-my-zsh, powerlevel10k, plugins, Kitty e fontes, aplica os dotfiles e copia os wallpapers. Funciona em distros de desktop, WSL, proot e Termux (veja "Gerenciadores e ambientes") |
 | `mirrors.sh` | Ranqueia os mirrors de novo, quando você quiser, sem refazer o resto. É só um atalho para `bash setup.sh --mirrors` (veja "Ranquear os mirrors de novo") |
-| `menu.sh` | Menu em tela cheia (TUI): detecta o sistema, mostra só o que funciona nele (ou tudo, com o que não funciona em vermelho fraco), tem submenus de opções (simular, repos, driver...) para o setup, a NVIDIA, o OXWM e o Caelestia, pede "Tem certeza", executa o script e volta ao menu; também reinicia, desliga (não no Termux nem no proot) e fecha o terminal; roda também sem clonar, por `curl ... \| bash`, baixando só o script do item escolhido (veja "Menu") |
+| `menu.sh` | Menu em tela cheia (TUI) com um menu pai (**Instalação e configuração** e **Backup**): detecta o sistema, mostra só o que funciona nele (ou tudo, com o que não funciona em vermelho fraco), tem submenus de opções (simular, repos, driver...) para o setup, a NVIDIA, o OXWM e o Caelestia, pede "Tem certeza", executa o script e volta ao menu; também reinicia, desliga (não no Termux nem no proot) e fecha o terminal; roda também sem clonar, por `curl ... \| bash`, baixando só o script do item escolhido (veja "Menu") |
+| `backup-disco.sh` | Limpa o sistema, faz o backup bit a bit de um disco inteiro (`ddrescue` + `zstd`, no live boot) e restaura. Interativo, escolhe os discos por número com modelo e serial; é o passo a passo do guia de backup de SSD (veja "Backup de discos") |
+| `tests/backup-disco.test.sh` | Teste do `backup-disco.sh` com `lsblk`, `findmnt`, `ddrescue`, `zstd`, `dd` e `snapper` de mentira que só registram as chamadas: confere a ordem do guia, as travas (disco montado ou com swap, FAT32, log antigo, setores ruins, destino menor, caminho digitado, ids do snapper) e o `--dry-run`; não toca em nenhum disco |
 | `tests/menu.test.sh` | Teste do `menu.sh` com scripts de mentira, teclas lidas de um arquivo e um `curl` de mentira (rota sem clone); confere também que a caixa fica centrada; não altera o sistema |
 | `tests/caelestia.test.sh` | Teste do `caelestia-setup.sh` com `pacman`, `paru` e `caelestia` de mentira num `HOME` temporário (ordem das chamadas, backup, `--so-atalhos`, erros) e dos dois `.lua`, carregados com o `lupa` (Python) contra uma API `hl` de mentira; não instala nada |
 | `tests/alarm-rootfs.test.sh` | Teste da instalação do Arch no `proot-distro` (Termux) com um GnuPG de verdade e chaves de teste: só instala o rootfs do Arch Linux ARM com assinatura válida da chave fixada; recusa arquivo adulterado, assinatura de outra chave, chave expirada, `.sig` ausente e keyserver fora do ar; confere também x86_64, arquitetura sem suporte, `--dry-run` e a limpeza do download. O keyserver, o `curl` e o `proot-distro` são de mentira; não usa a rede |
@@ -197,6 +199,8 @@ No `--dry-run`, com o `apk` instalado, o script roda `apk add --simulate` em cad
 bash menu.sh
 ```
 
+O menu abre num **menu pai** com duas telas: **Instalação e configuração** (tudo o que o menu já tinha: setup, dotfiles, mirrors, NVIDIA, OXWM, Caelestia) e **Backup** (limpeza, backup e restauração de discos; veja "Backup de discos"). `Enter` entra numa tela, `q` volta ao menu pai e, no menu pai, sai. As duas telas dividem a caixa "Sistema" (mostrar todas, reiniciar, desligar, fechar o terminal, sair). O item **Backup** só existe onde a tela teria o que mostrar: distro de desktop e Termux (no WSL e no proot ele some, ou aparece em vermelho no "mostrar todas").
+
 Um menu em tela cheia (TUI, em bash puro, sem instalar nada): caixas de bordas arredondadas, seleção destacada e confirmação antes do que altera o sistema. Cada item roda o script certo **como processo filho** e, quando ele termina (ou falha), mostra o código de saída e volta para a tela inicial. Como o `nmtui` e o `alsamixer`, o menu vive na **tela alternativa** do terminal: não pisca ao trocar de opção (cada quadro é desenhado por cima do anterior, sem limpar a tela) e, ao sair (`q`, "Sair do menu" ou Ctrl+C), o terminal volta exatamente como estava. O script escolhido roda na tela normal, então a saída dele fica no terminal e no scrollback; só o menu não deixa rastro. Para ver onde cada comando começa e termina, a saída vem entre um **título** (`━━ ▶ Setup completo ━━━━`, com o comando exato embaixo: `$ bash setup.sh --sem-encerrar`) e uma **linha de fim** com o resultado (`━━ ✔ setup.sh terminou (código 0) ━━━━`; `✖` se o código não for 0). Reiniciar e Desligar também mostram o título.
 
 | Tecla | O que faz |
@@ -204,9 +208,13 @@ Um menu em tela cheia (TUI, em bash puro, sem instalar nada): caixas de bordas a
 | `↑` `↓` (ou `k` `j`) | Move a seleção; dá a volta nas pontas |
 | `Enter` | Executa o item selecionado (ou abre o submenu dele) |
 | `a` | Liga/desliga "Mostrar todas as opções" |
-| `q` | Sai do menu (dentro de um submenu, volta) |
+| `q` | Volta um nível: do submenu para a tela, da tela para o menu pai; no menu pai, sai do menu |
 
 Dentro de um submenu: `Enter` ou `←` `→` mudam o valor da opção selecionada, `r` roda com o que está marcado e `q` volta. O comando exato que vai rodar aparece numa caixa embaixo e muda a cada tecla. A primeira opção é sempre a simulação (`--dry-run`), desligada por padrão; se ela estiver ligada, o comando roda sem pedir "Tem certeza".
+
+Menu pai: **Instalação e configuração** abre a tela com os itens abaixo; **Backup** abre a tela da tabela seguinte.
+
+Tela **Instalação e configuração**:
 
 | Item | O que faz | Aparece quando |
 | ---- | --------- | -------------- |
@@ -223,6 +231,15 @@ Dentro de um submenu: `Enter` ou `←` `→` mudam o valor da opção selecionad
 | Fechar este terminal | Manda SIGHUP ao shell que chamou o menu. Se o menu foi chamado por `sudo`, não acha o shell com segurança e pede para você digitar `exit` | sempre |
 | Sair do menu | Sai só do menu; o terminal continua aberto | sempre |
 
+Tela **Backup** (o `backup-disco.sh`; veja "Backup de discos"):
+
+| Item | O que faz | Aparece quando |
+| ---- | --------- | -------------- |
+| Limpar antes do backup | Submenu do `backup-disco.sh limpar`: cache de pacotes, journal, snapshots do snapper e `fstrim` (sempre por último) | desktop, fora do WSL |
+| Fazer backup do disco | Submenu do `backup-disco.sh backup`: escolhe o disco e o destino por número, `ddrescue` e `zstd` | desktop, fora do WSL |
+| Restaurar backup do disco | Submenu do `backup-disco.sh restaurar`: **sobrescreve** um disco inteiro | desktop, fora do WSL |
+| Termux: backup e restauração | **Ainda não liga o `Termux/Backup_Termux.sh`**: o `Enter` só mostra como rodar hoje (`zsh Termux/Backup_Termux.sh`, veja "Backup do Termux"). O espaço já existe para ligá-lo depois | Termux (em vermelho, no "mostrar todas", nos outros) |
+
 Opções dos submenus (cada uma vira um argumento ou uma variável de ambiente do script; só as que funcionam no seu sistema aparecem):
 
 | Submenu | Opções |
@@ -231,6 +248,9 @@ Opções dos submenus (cada uma vira um argumento ou uma variável de ambiente d
 | NVIDIA | Simular; Driver (`--open`, e `--proprietary` fora do Arch); Módulo (`--dkms`); Bootloader (`--bootloader=`); PRIME (`--no-prime`); Snapshot (`--no-snapshot`); fora do Arch, `--allow-untested` |
 | OXWM | Simular; `--startx`; gerenciador de login (`--dm=sddm` ou `--dm=lightdm`); `--sem-sistema` (nos sistemas sem instalação de pacotes ela já vem marcada) |
 | Caelestia | Simular; instalar tudo ou só a config (`--so-atalhos`; fora do Arch só a config) |
+| Limpar antes do backup | Simular; cache de pacotes (`--sem-cache`); journal (`--sem-journal`); snapshots (`--sem-snapshots`); `fstrim` (`--sem-fstrim`) |
+| Fazer backup do disco | Simular; compressão: nível 19 (padrão), 12, 3 (`--nivel=`) ou sem compressão (`--sem-compressao`) |
+| Restaurar backup do disco | Simular |
 
 - **Detecção do sistema.** O menu lê o `/etc/os-release` (`ID` e `ID_LIKE`), a arquitetura, o `PREFIX` do Termux, o kernel (WSL, proot) e o `/etc/arch-release`, os mesmos ganchos de teste do `setup.sh` (`OS_RELEASE_FILE`, `ARCH_RELEASE_FILE`, `UNAME_M`, `KERNEL_RELEASE`, `FORCE_PROOT`). Por exemplo, os repos do CachyOS só aparecem no Arch e no EndeavourOS x86_64; o CachyOS OS em si não conta, porque já traz os repositórios.
 - **Mostrar todas as opções.** Por padrão o menu e os submenus só trazem o que funciona neste sistema. Com `a` (ou `Enter` no item "Mostrar todas as opções") o que ficou de fora aparece em **vermelho fraco** (`\e[38;5;131m`, legível em fundo claro e escuro); a descrição diz "Não funciona neste sistema" e o motivo. Esses itens e opções **não rodam**, não giram com `Enter` e não entram no comando. Sem cor (`NO_COLOR=1` ou `TERM=dumb`) eles ganham um `✗` no lugar do marcador. A seleção continua no mesmo item ao ligar e desligar.
@@ -242,8 +262,9 @@ Opções dos submenus (cada uma vira um argumento ou uma variável de ambiente d
 - **O que o menu não cobre.** Os submenus trazem as opções que mudam o resultado e valem para o seu sistema; o resto das opções e variáveis do `setup.sh` (`--help`) continua só na linha de comando.
 - **`--sem-encerrar`:** o `setup.sh` normalmente pergunta no fim "Deseja encerrar a sessão?" e fecha o shell que o chamou. Sob o menu esse shell seria o próprio menu, então o item de setup passa `--sem-encerrar` e a pergunta some; use "Fechar este terminal" quando quiser fechar o terminal.
 - **Precisa do bash.** Sem ele (Alpine, por exemplo) o menu avisa e mostra o comando de instalação do gerenciador que achar (`apk add bash`, `apt-get install -y bash`...), para rodar como root; depois é só `bash menu.sh`. Com o bash instalado, `sh menu.sh` já reexecuta sozinho em bash.
-- **Rode como usuário normal.** O `setup.sh`, o `oxwm-setup.sh` e o `caelestia-setup.sh` pedem `sudo` sozinhos; o `nvidia.sh` recusa root.
-- **Testes:** `bash tests/menu.test.sh` (scripts de mentira, respostas por arquivo), `bash tests/dotfiles.test.sh`, `bash tests/alarm-rootfs.test.sh`, `bash tests/caelestia.test.sh` e `bash tests/nvidia.test.sh`.
+- **Rode como usuário normal.** O `setup.sh`, o `oxwm-setup.sh` e o `caelestia-setup.sh` pedem `sudo` sozinhos; o `nvidia.sh` recusa root. A exceção é o **Backup no live boot** (SystemRescue): lá você já é root, e o `backup-disco.sh` aceita (e, como usuário normal, reexecuta com `sudo` ou `doas`).
+- **Os discos não são escolhidos no menu.** Escolher o disco que será lido ou sobrescrito não cabe numa opção que gira de valor (o nome ficaria cortado em terminal estreito): o `backup-disco.sh` lista os discos com tamanho, **modelo e serial** e pergunta o número, na tela normal. O submenu só traz as opções do comando.
+- **Testes:** `bash tests/menu.test.sh` (scripts de mentira, respostas por arquivo), `bash tests/backup-disco.test.sh`, `bash tests/dotfiles.test.sh`, `bash tests/alarm-rootfs.test.sh`, `bash tests/caelestia.test.sh` e `bash tests/nvidia.test.sh`.
 
 ### Rodar sem clonar (`curl | bash`)
 
@@ -583,6 +604,37 @@ O Caelestia lê esses arquivos por cima da config dele: o `hypr-vars.lua` devolv
 - **Para mudar algo**, edite o arquivo em `.config/caelestia/` do repo e rode `bash caelestia-setup.sh --so-atalhos`. Os nomes das chaves do `hypr-vars.lua` são os do `variables.lua` do Caelestia: uma chave errada é ignorada em silêncio, e o teste **não** confere isso.
 - **Testes:** `bash tests/caelestia.test.sh`.
 
+## Backup de discos
+
+`backup-disco.sh` faz o backup bit a bit de um **disco inteiro** (tabela de partições, bootloader e dados) para um arquivo `.img.zst` e o restaura depois. É o passo a passo do guia "GUIA BACKUP E RESTAURAÇÃO SSD" (SystemRescue, `ddrescue` e `zstd`) em forma de script interativo. Pelo menu: **Backup**, no menu pai. Direto: `bash backup-disco.sh limpar|backup|restaurar [opções]`.
+
+| Comando | Onde rodar | O que faz |
+| ------- | ---------- | --------- |
+| `limpar` | No sistema normal, **antes** do backup | 1. cache de pacotes (`paccache -rk1` e `-ruk0` no Arch, `eclean-dist -d` no Gentoo, `apt clean` + `autoremove` no Debian/Ubuntu, `dnf clean all` + `autoremove` no Fedora); 2. `journalctl --vacuum-size=200M`; 3. snapshots do snapper (btrfs): lista, você digita os números a apagar e ele espera a remoção com `btrfs subvolume sync /`; 4. `fstrim -av`, **sempre por último** |
+| `backup` | No live boot (SystemRescue, boot com `copytoram`) | Escolhe o disco de origem e a partição de destino, monta o destino em `/mnt/destino`, roda `ddrescue` para `<nome>.img` com o `<nome>.log`, confere o log, comprime com `zstd -T0 -19 --rm`, testa com `zstd -t`, faz `sync` e `umount` |
+| `restaurar` | No live boot | Escolhe a partição onde está o backup, o arquivo (`.img.zst` ou `.img`) e o disco a sobrescrever; só grava depois de você **digitar o caminho do disco**. Usa `zstd -d <arquivo> -c \| dd of=<disco> bs=4M status=progress conv=fsync` |
+
+Opções: `--dry-run` (mostra, com `[sim]`, só os comandos que mudam algo; os discos ainda são listados), no `limpar` `--sem-cache`, `--sem-journal`, `--sem-snapshots` e `--sem-fstrim`, no `backup` `--nivel=N` (1 a 19; padrão 19, 12 se o PC for fraco) e `--sem-compressao` (deixa o `.img`). Variáveis: `BACKUP_DIR_NAME` (pasta dentro do destino; padrão `BACKUP DISCOS RÍGIDOS`, a do guia) e `BACKUP_MNT` (onde monta; padrão `/mnt/destino`).
+
+Travas de segurança (o script recusa em vez de perguntar):
+
+- **O disco de origem do backup e o disco a sobrescrever não podem ter nada montado nem swap em uso** (confere cada partição e volume dentro dele com `findmnt` e `swapon`; qualquer dúvida conta como "em uso"). Por isso o backup só roda no live boot: no sistema rodando a raiz está montada. Se o `lsblk` falhar, também recusa.
+- O destino do backup nunca é uma partição do próprio disco de origem, e **FAT32 é recusado** (não guarda arquivo de mais de 4 GiB). exFAT, NTFS e ext4 servem.
+- Espaço livre: recusa se o destino não comporta o `.img` (descontando o que já existe numa retomada) e avisa quando não sobra espaço para o `.zst` coexistir com ele.
+- Nome do backup só com letras, números, `.`, `_` e `-`. Já existindo o `.img.zst`, ele recusa. Já existindo o `.img` ou o `.log`: se o `.log` não termina com `# Finished`, pergunta se retoma de onde parou (o `ddrescue` continua sozinho); se o `.log` é de um backup **acabado**, recusa, porque o `ddrescue` o reaproveitaria e não copiaria nada (é o aviso do guia sobre renomear o log antigo).
+- Depois do `ddrescue`, o log precisa ter **um único bloco `+`**: com qualquer setor ruim ele para antes de comprimir e mantém o `.img`. O `--rm` do `zstd` só apaga o `.img` depois de gravar o `.zst`.
+- Na restauração: recusa disco menor que a imagem (o tamanho vem de `zstd -lv`; se o `zstd` não informar, só avisa) e mostra modelo e serial antes de pedir o caminho do disco.
+- Ids do snapper só entram como números ou intervalos (`12`, `116-138`); o `0` (sistema atual) e qualquer outra coisa são recusados. O `limpar` não usa `btrfs subvolume delete` direto, para não desincronizar o snapper (como avisa o guia).
+
+Desvios do guia, de propósito:
+
+- O ponto de montagem é sempre `/mnt/destino` (o guia mistura `/mnt/` e `/mnt/destino`).
+- A restauração de um `.img` sem compressão usa `dd`, não `ddrescue`: pelo que se sabe, o `ddrescue` só grava num disco com `-f`, que o guia não traz (o `dd` é o que o guia já usa na restauração comprimida).
+- Não automatiza: gravar a pendrive do SystemRescue (parte 2 do guia, uma vez só), o `paru -Sc` do AUR (roda como usuário), o `btrfs balance` e a remoção de órfãos do pacman (opcionais no guia). Também não faz o boot no SystemRescue: rode o menu de lá (`curl -fsSL https://raw.githubusercontent.com/V0LtagE1z/Minhas-Paradas/main/menu.sh \| bash`, precisa de rede).
+- A lista de destinos mostra só **partições** com sistema de arquivos (não discos formatados sem tabela de partições, LVM nem LUKS).
+
+O backup do Termux (`Termux/Backup_Termux.sh` e `Backup-Restore.sh`, veja "Backup do Termux") continua separado: na tela Backup do menu há o espaço para ele, mas por enquanto o item só mostra como rodar os dois.
+
 ## Backup do Termux
 
 Dois scripts em `Termux/`, escritos em zsh e que precisam de `zstd` e `pv` (`pkg install zstd pv`) e do acesso ao armazenamento (`termux-setup-storage`, porque gravam em `~/storage/shared/Documents`):
@@ -596,6 +648,7 @@ Dois scripts em `Termux/`, escritos em zsh e que precisam de `zstd` e `pv` (`pkg
 - O `nvidia.sh` foi testado só com cenários simulados, sem hardware NVIDIA no desenvolvimento; só o Arch tem execução real prevista (Fedora, Ubuntu e Debian ficam em `--dry-run`). Rode `./nvidia.sh install --dry-run` e leia o plano antes de instalar.
 - O `oxwm-setup.sh` só funciona em Arch e derivadas (usa `paru` ou `yay` e o AUR), é para X11 e o `config.lua` espera o wallpaper e o `claude-desktop` do seu usuário.
 - O `caelestia-setup.sh` nunca rodou de verdade, e a URL do logo (jsDelivr) nem chegou a ser aberta no desenvolvimento (se o download falhar, o script só avisa) (sem Arch, `paru` nem Hyprland no desenvolvimento): foi testado com `pacman`, `paru` e `caelestia` de mentira, e os dois `.lua` só foram carregados contra uma API `hl` de mentira (o `shell.json` só teve o JSON validado). O `caelestia install` não tem opção documentada para rodar sem perguntas, então o script o deixa interativo. Só Arch e derivadas (fora delas, instale o Caelestia à mão e use `--so-atalhos`).
+- O `backup-disco.sh` foi testado só com `lsblk`, `findmnt`, `ddrescue`, `zstd`, `dd` e `snapper` de mentira (e o `lsblk` e o `findmnt` reais num sistema sem partições, só para conferir a leitura da saída). O `ddrescue`, o `zstd`, o `dd` e o `snapper` de verdade nunca rodaram com ele, nem com um disco real. O guia diz que o `fstrim` zera os blocos livres: isso depende do SSD (nem todo disco devolve zeros para blocos descartados), então o tamanho do backup comprimido não é garantido. Faça primeiro com `--dry-run` e, se der, com um disco pequeno ou uma pendrive.
 - O `Backup-Restore.sh` procura por padrão um nome diferente do que o `Backup_Termux.sh` gera (veja "Backup do Termux").
 - Os dotfiles são baixados de `raw.githubusercontent.com` sem checksum, e da `main` por padrão (`DOTFILES_REF` fixa um commit). Sem rede para o GitHub o setup não aplica os dotfiles; só o aviso aparece.
 - O `setup.sh` não copia o `Termux/.zsh_history` nem os temas `*.auto.conf` do Kitty; só `.zshrc`, `.p10k.zsh` e o `kitty.conf`.

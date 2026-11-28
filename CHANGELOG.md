@@ -2,6 +2,38 @@
 
 Mudanças notáveis do `setup.sh` e do repositório. Formato inspirado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); o projeto não usa versões, então as entradas são por data.
 
+## Não lançado (branch `menu-backup-discos`, a partir da `main`)
+
+### 2026-11-28
+
+#### Adicionado
+
+- **`backup-disco.sh`: backup bit a bit de um disco inteiro e restauração**, o passo a passo do "GUIA BACKUP E RESTAURAÇÃO SSD" (SystemRescue, `ddrescue`, `zstd`) em forma de script interativo, com três comandos: `limpar` (no sistema normal: cache de pacotes de Arch, Gentoo, Debian/Ubuntu e Fedora; `journalctl --vacuum-size=200M`; snapshots do snapper com `btrfs subvolume sync /`; `fstrim -av` sempre por último), `backup` (no live boot: `ddrescue` para `.img` + `.log`, confere o log, `zstd -T0 -19 --rm`, `zstd -t`, `sync`, `umount`) e `restaurar` (`zstd -d | dd`, só depois de digitar o caminho do disco). Os discos e partições são escolhidos por número, com tamanho, **modelo e serial**. Opções: `--dry-run`, `--sem-cache`, `--sem-journal`, `--sem-snapshots`, `--sem-fstrim`, `--nivel=N`, `--sem-compressao`; variáveis `BACKUP_DIR_NAME` e `BACKUP_MNT`.
+- **Travas do `backup-disco.sh`:** recusa disco com partição montada ou swap em uso (origem do backup e disco a sobrescrever; qualquer dúvida, inclusive um `lsblk` que falha, conta como "em uso"), destino na mesma unidade da origem, FAT32 (arquivo de mais de 4 GiB), falta de espaço, nome de backup inválido, `.zst` já existente, `.log` de um backup acabado (o `ddrescue` o reaproveitaria e não copiaria nada), disco de destino menor que a imagem, ids do snapper que não sejam números ou intervalos, e backup com setores ruins (para antes de comprimir e mantém o `.img`).
+- **`menu.sh`: menu pai com duas telas, Instalação e configuração (o menu de antes, sem mudança) e Backup.** `Enter` entra, `q` volta ao menu pai (no menu pai, sai) e a seleção volta ao item de onde se entrou. A tela Backup tem *Limpar antes do backup*, *Fazer backup do disco* e *Restaurar backup do disco*, cada um com um submenu de opções (simular, cache, journal, snapshots, fstrim, nível do `zstd`) como os demais. A caixa "Sistema" (mostrar todas, reiniciar, desligar, fechar, sair) vale nas duas telas. O item Backup do menu pai só existe onde a tela tem o que mostrar (desktop e Termux; no WSL e no proot some, ou aparece em vermelho no "mostrar todas").
+- **`menu.sh`: espaço reservado para o backup do Termux.** No Termux a tela Backup traz *Termux: backup e restauração*, que ainda **não liga** o `Termux/Backup_Termux.sh` (nem o `Backup-Restore.sh`, escritos em zsh; o `run_script` só usa bash): o `Enter` mostra como rodá-los hoje. Fora do Termux o item só aparece em vermelho no "mostrar todas". Ligar de verdade fica para depois, a pedido do autor.
+- **`tests/backup-disco.test.sh`:** `lsblk`, `findmnt`, `swapon`, `ddrescue`, `zstd`, `dd`, `snapper` e afins de mentira que registram as chamadas. Cobre a ordem do guia, cada trava acima, a retomada de um backup interrompido, a restauração (`.img.zst` e `.img`), a limpeza (inclusive a injeção em ids do snapper e o `fstrim` como última chamada), o `--dry-run` sem efeito e a reexecução com `sudo` levando as mesmas opções. Foi conferido por mutação: desligar cada trava (origem montada, swap, caminho digitado, log do `ddrescue`, FAT32, tamanho do destino, espaço livre, ids do snapper, log acabado, ordem do `fstrim`, `--dry-run`) faz o teste falhar. O `lsblk` de mentira recusa `-r` com `-P`, como o de verdade.
+- **`tests/menu.test.sh`:** casos do menu pai, da navegação (`q` volta, a seleção volta ao item), da tela Backup (cada opção vira o argumento certo, "Tem certeza" antes de rodar, sem confirmação no `--dry-run`), dos sistemas sem disco (Termux, proot, WSL), do item do Termux, de 40 colunas (nada cortado nas telas e nos submenus novos) e da rota sem clone (o Backup baixa só o `backup-disco.sh`; navegar não baixa nada). `MENU_START` (`install` ou `backup`) abre direto numa tela: existe só para o teste, como `MENU_DIR`; os testes antigos rodam com `MENU_START=install`.
+
+#### Alterado
+
+- README: seção "Backup de discos", o menu pai e a tela Backup em "Menu", as duas linhas novas da tabela de arquivos e uma limitação.
+
+#### Corrigido
+
+- Só no que esta branch adiciona: rodar o `backup-disco.sh` contra o `lsblk` real (num sistema sem partições) mostrou que `lsblk -r` junto com `-P` é recusado (`mutually exclusive arguments`), coisa que o `lsblk` de mentira aceitava; a listagem de partições passou a usar só `-P`, e o `zram0` (0 byte) deixou de aparecer como disco. O teste agora rejeita essa combinação.
+
+#### Planejado
+
+- Ligar o backup do Termux (`Termux/Backup_Termux.sh` e `Backup-Restore.sh`) ao item que já existe na tela Backup: precisa rodar com `zsh` e baixar os dois arquivos na rota sem clone. Falta também decidir o nome padrão da restauração (veja "Limitações" no README).
+- Aceitar LVM, LUKS e disco formatado sem tabela de partições como destino do backup.
+
+#### Não testado
+
+- **O `backup-disco.sh` nunca rodou com `ddrescue`, `zstd`, `dd` ou `snapper` de verdade, nem com um disco de verdade.** Os testes usam comandos de mentira; o `lsblk`, o `findmnt` e o `swapon` reais só foram exercitados num sistema onde todo disco é um volume inteiro sem partições (então a listagem real de partições, a montagem e a gravação não foram vistas). O formato de `zstd -lv` (a linha `Decompressed Size`) e o fato de o `ddrescue` exigir `-f` para gravar num disco vêm da memória do autor do código, não de um teste. Falta rodar `bash backup-disco.sh backup --dry-run` e um backup num disco pequeno de teste, no SystemRescue de verdade.
+- A rota `curl | bash` no SystemRescue (precisa de rede e de `curl` ou `wget` no live boot) e as cores da tela nova num terminal de verdade (só a saída sem cor e o Ctrl+C num pty foram vistos).
+- `tests/menu.test.sh` já falhava na `main` limpa neste ambiente de verificação, com **23 falhas**: 22 de "texto cortado (…)" nos motivos longos do "mostrar todas" em 40 colunas (como *Nem no WSL, Termux, proot-distro,…*) e 1 de texto (o teste procura *Não funciona neste sistema* e o menu diz *nesse*). A lista de falhas com esta branch é **idêntica** (conferida linha a linha); nenhuma falha é dos textos novos. Não foram corrigidas aqui por não terem relação com o pedido.
+
 ## Não lançado (branch `termux-alarm-rootfs-oficial`, a partir da `main`)
 
 ### 2026-11-22
