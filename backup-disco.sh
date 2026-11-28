@@ -195,7 +195,7 @@ log_ok() { awk '/^#/ {next} ++n == 1 {next} $3 != "+" {bad = 1} END {exit bad}' 
 cmd_backup() {
   need lsblk findmnt swapon ddrescue; ((NOZ)) || need zstd
   ((DRY_RUN)) || root_or_exec
-  local name img mapf zst cur=0 avail need_b resume=0
+  local name img mapf zst cur=0 avail need_b resume=0 only_zip=0
   pick_disk "Disco de ORIGEM (será só lido)"; local src=$DEV src_size=$DSIZE src_desc=$DDESC
   in_use "$src" && die "$src tem partição montada ou swap em uso. Rode no live boot (SystemRescue), com o disco de origem desmontado."
   mount_part "Partição de DESTINO (onde ficará o backup)" "$src"
@@ -203,33 +203,41 @@ cmd_backup() {
   printf 'Nome do backup, sem extensão [backup_ssd]: '; read -r name || die "sem resposta"; name=${name:-backup_ssd}
   [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || die "nome inválido (use letras, números, . _ -): $name"
   img=$DIR/$name.img mapf=$DIR/$name.log zst=$img.zst
-  [[ -e $zst ]] && die "já existe $zst. Apague-o ou escolha outro nome."
+  [[ -e $zst && ! -e $img ]] && die "já existe $zst. Apague-o ou escolha outro nome."
   if [[ -e $img || -e $mapf ]]; then
     if [[ -e $img && -e $mapf ]] && ! grep -q '^# Finished' "$mapf"; then
       ask "Existe um backup INTERROMPIDO com esse nome. Retomar de onde parou?" && resume=1
+    elif ((! NOZ)) && [[ -e $img && -e $mapf ]] && log_ok "$mapf"; then   # bruto completo e limpo: só a compressão não terminou (ou foi adiada)
+      ask "Já existe o backup bruto COMPLETO $name.img. Só comprimir ele, SEM ler o disco de novo?" && only_zip=1
     fi
-    ((resume)) || die "já existem $name.img/.log (o .log é o que o ddrescue usa para retomar: um antigo e acabado atrapalha). Renomeie ou apague, ou escolha outro nome."
+    ((resume || only_zip)) || die "já existem $name.img/.log (o .log é o que o ddrescue usa para retomar: um antigo e acabado atrapalha). Renomeie ou apague, ou escolha outro nome."
   fi
-  if [[ -d $DIR ]]; then
+  [[ -e $zst ]] && ((! only_zip)) && die "já existe $zst. Apague-o ou escolha outro nome."
+  if [[ -d $DIR ]] && ((! only_zip)); then
     [[ -e $img ]] && cur=$(stat -c %s "$img")
     avail=$(df -B1 --output=avail "$DIR" | tail -n1 | tr -d ' '); need_b=$((src_size - cur))
     ((avail >= need_b)) || die "faltam $(hum $((need_b - avail))) no destino (livre: $(hum "$avail"), o .img precisa de $(hum "$need_b"))."
     ((avail >= 2 * need_b)) || warn "livre ($(hum "$avail")) cabe o .img, mas o .zst precisa de espaço extra enquanto o .img existe; no pior caso, outro tanto."
   fi
-  echo; echo "Origem : $src_desc"; echo "Destino: $img  (livre em $MNT)"
+  echo; if ((only_zip)); then echo "Origem : (não será lida; só vou comprimir $name.img)"; else echo "Origem : $src_desc"; fi
+  echo "Destino: $img  (livre em $MNT)"
   ((NOZ)) && echo "Depois: fica só o .img (sem compressão)" || echo "Depois: zstd -T0 -$NIVEL --rm -> $name.img.zst, teste, umount"
-  ask "Fazer o backup de $src?" || die "cancelado"
-  run ddrescue -v "$src" "$img" "$mapf" || die "o ddrescue falhou (código $?). Rode de novo, com o mesmo nome: ele continua de onde parou."
-  if ! ((DRY_RUN)); then
-    log_ok "$mapf" || die "o ddrescue terminou com setores problemáticos (veja $mapf: só um bloco '+' é um backup limpo). O .img NÃO foi comprimido."
+  if ((only_zip)); then ask "Comprimir $name.img?" || die "cancelado"; else ask "Fazer o backup de $src?" || die "cancelado"; fi
+  if ((! only_zip)); then
+    run ddrescue -v "$src" "$img" "$mapf" || die "o ddrescue falhou (código $?). Rode de novo, com o mesmo nome: ele continua de onde parou."
+    if ! ((DRY_RUN)); then
+      log_ok "$mapf" || die "o ddrescue terminou com setores problemáticos (veja $mapf: só um bloco '+' é um backup limpo). O .img NÃO foi comprimido."
+    fi
+    log "backup bruto pronto: $img"
   fi
-  log "backup bruto pronto: $img"
   if ((! NOZ)); then
+    ((only_zip)) && [[ -e $zst ]] && run rm -f "$zst"   # sobra parcial de uma compressão interrompida: o .img completo é a fonte
     echo "Comprimindo (nível $NIVEL; use --nivel=12 em PC fraco; HD mecânico: não rode outras cópias grandes ao mesmo tempo)..."
     run zstd -T0 "-$NIVEL" --rm "$img" -o "$zst" || die "o zstd falhou (código $?); o .img foi mantido."
     run zstd -t "$zst" || die "o teste de integridade de $zst falhou: o .img já foi apagado pelo --rm; refaça o backup."
     ((DRY_RUN)) || ls -lh "$zst"
   fi
+  ((only_zip)) && warn "lembrete: o disco $src NÃO foi lido agora; o que foi comprimido é o backup bruto que já existia."
   finish_mount
   log "tudo certo. Só desligue ou remova o disco depois do umount."
 }
